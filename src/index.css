@@ -1,0 +1,6 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Añade aquí reglas globales si las necesitas */
+body { @apply bg-slate-50; }
