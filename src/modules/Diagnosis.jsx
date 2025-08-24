@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { FancyCard, Button, clsx } from '../components/ui'
 import { RED_FLAGS_SAMPLE } from '../lib/data'
 import { CheckCircle2, XCircle } from 'lucide-react'
+import { mascotSpeak } from '../components/MascotGuide'
 
 export default function Diagnosis({ onScore }) {
   const [selected, setSelected] = useState([]);
@@ -13,6 +14,7 @@ export default function Diagnosis({ onScore }) {
     let ok = selected.length === RED_FLAGS_SAMPLE.correct.length;
     if (ok) for (const id of selected) if (!correctSet.has(id)) ok = false;
     setChecked(true); onScore(ok);
+  mascotSpeak({ text: ok ? 'Excelente diagnóstico.' : 'Casi, revisa las señales de alerta.', mood: ok ? 'cheer' : 'sad' })
   }
 
   return (

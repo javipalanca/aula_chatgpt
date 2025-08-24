@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { FancyCard, Button } from '../components/ui'
 import { BAD_PROMPTS } from '../lib/data'
+import { mascotSpeak } from '../components/MascotGuide'
 
 export default function ImprovePrompt({ onScore }) {
   const [idx, setIdx] = useState(0);
@@ -18,6 +19,7 @@ export default function ImprovePrompt({ onScore }) {
     if (/nivel|curso|4º|3º|bachillerato|contexto/i.test(t)) score++;
     onScore(score);
     setChecked(true);
+  mascotSpeak({ text: `Te he dado ${score} puntos por tu mejora.`, mood: score >= 3 ? 'happy' : 'neutral' })
   }
 
   return (

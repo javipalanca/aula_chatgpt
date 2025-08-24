@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="240" height="240" role="img" aria-label="Mascota durmiendo">
+  <defs>
+    <linearGradient id="gs" x1="0" x2="1">
+      <stop offset="0%" stop-color="var(--mascot-secondary)"/>
+      <stop offset="100%" stop-color="var(--mascot-primary)"/>
+    </linearGradient>
+  </defs>
+
+  <ellipse cx="120" cy="206" rx="62" ry="12" fill="#000" opacity="0.06"/>
+
+  <path d="M48 136 C48 96 76 72 120 72 C164 72 192 96 192 136 C192 176 152 208 120 208 C88 208 48 176 48 136 Z" fill="url(#gs)"/>
+  <ellipse cx="120" cy="132" rx="46" ry="40" fill="#FFF" stroke="rgba(0,0,0,0.06)"/>
+
+  <!-- Eyes closed -->
+  <path d="M90 126 Q100 136 110 126" stroke="#07204A" stroke-width="4" stroke-linecap="round" fill="none"/>
+  <path d="M130 126 Q140 136 150 126" stroke="#07204A" stroke-width="4" stroke-linecap="round" fill="none"/>
+
+  <!-- Zzz -->
+  <g>
+    <text x="170" y="76" font-family="sans-serif" font-size="20" fill="#274472" opacity="0.9">Z</text>
+    <text x="182" y="64" font-family="sans-serif" font-size="14" fill="#274472" opacity="0.7">z</text>
+    <text x="194" y="56" font-family="sans-serif" font-size="10" fill="#274472" opacity="0.6">z</text>
+  </g>
+
+  <!-- Relaxed arms -->
+  <path d="M70 150 Q86 160 92 164" stroke="var(--mascot-accent)" stroke-width="10" stroke-linecap="round" fill="none" opacity="0.9"/>
+  <path d="M170 150 Q154 160 148 164" stroke="var(--mascot-accent)" stroke-width="10" stroke-linecap="round" fill="none" opacity="0.9"/>
+
+  <!-- Feet -->
+  <rect x="88" y="188" width="18" height="12" rx="6" fill="var(--mascot-muted)"/>
+  <rect x="134" y="188" width="18" height="12" rx="6" fill="var(--mascot-muted)"/>
+
+</svg>

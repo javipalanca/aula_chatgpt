@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="240" height="240" role="img" aria-label="Mascota pensando">
+  <defs>
+    <linearGradient id="gt" x1="0" x2="1">
+      <stop offset="0%" stop-color="var(--mascot-secondary)"/>
+      <stop offset="100%" stop-color="var(--mascot-primary)"/>
+    </linearGradient>
+  </defs>
+
+  <ellipse cx="120" cy="206" rx="62" ry="12" fill="#000" opacity="0.08"/>
+
+  <path d="M48 136 C48 96 76 72 120 72 C164 72 192 96 192 136 C192 176 152 208 120 208 C88 208 48 176 48 136 Z" fill="url(#gt)"/>
+  <ellipse cx="120" cy="132" rx="46" ry="40" fill="#FFF" stroke="rgba(0,0,0,0.06)"/>
+
+  <!-- Eyes -->
+  <g>
+    <g transform="translate(-6,-8)">
+  <ellipse class="eye-iris" cx="98" cy="122" rx="14" ry="16" fill="#07161A"/>
+  <circle class="eye-highlight" cx="96" cy="118" r="5" fill="#fff" opacity="0.95"/>
+  <circle class="eye-pupil" cx="100" cy="125" r="3" fill="#061213"/>
+    </g>
+    <g transform="translate(6,-8)">
+  <ellipse class="eye-iris" cx="142" cy="122" rx="14" ry="16" fill="#07161A"/>
+  <circle class="eye-highlight" cx="140" cy="118" r="5" fill="#fff" opacity="0.95"/>
+  <circle class="eye-pupil" cx="144" cy="125" r="3" fill="#061213"/>
+    </g>
+  </g>
+
+  <!-- Hand on chin -->
+  <path d="M150 150 Q142 160 138 168 Q134 176 128 176" stroke="var(--mascot-accent)" stroke-width="10" stroke-linecap="round" fill="#F8FBFF"/>
+  <circle cx="122" cy="168" r="8" fill="#F0F6FF" stroke="rgba(0,0,0,0.05)"/>
+
+  <!-- Thought bubble -->
+  <g>
+    <ellipse cx="182" cy="78" rx="28" ry="18" fill="#FFF" stroke="#CADCF9" stroke-width="2"/>
+    <circle cx="162" cy="98" r="8" fill="#FFF" stroke="#CADCF9" stroke-width="1"/>
+    <circle cx="152" cy="112" r="5" fill="#FFF" stroke="#CADCF9" stroke-width="1"/>
+  </g>
+
+  <!-- Legs -->
+  <rect x="88" y="188" width="18" height="12" rx="6" fill="var(--mascot-muted)"/>
+  <rect x="134" y="188" width="18" height="12" rx="6" fill="var(--mascot-muted)"/>
+
+</svg>

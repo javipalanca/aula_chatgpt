@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 240" width="320" height="240" role="img" aria-label="Mascota con portátil">
+  <defs>
+    <linearGradient id="gl" x1="0" x2="1">
+      <stop offset="0%" stop-color="var(--mascot-secondary)"/>
+      <stop offset="100%" stop-color="var(--mascot-primary)"/>
+    </linearGradient>
+  </defs>
+
+  <ellipse cx="160" cy="212" rx="84" ry="14" fill="#000" opacity="0.08"/>
+
+  <path d="M82 132 C82 92 112 70 160 70 C208 70 238 92 238 132 C238 172 196 204 160 204 C124 204 82 172 82 132 Z" fill="url(#gl)"/>
+  <ellipse cx="160" cy="124" rx="52" ry="46" fill="#FFF" stroke="rgba(0,0,0,0.06)"/>
+
+  <!-- Eyes -->
+  <g>
+    <g transform="translate(-6,-6)">
+      <ellipse class="eye-iris eye-blink" cx="128" cy="118" rx="14" ry="16" fill="#07161A"/>
+      <circle class="eye-highlight eye-sparkle" cx="126" cy="114" r="5" fill="#fff" opacity="0.95"/>
+      <circle class="eye-pupil" cx="130" cy="120" r="3" fill="#061213"/>
+    </g>
+    <g transform="translate(6,-6)">
+      <ellipse class="eye-iris eye-blink" cx="192" cy="118" rx="14" ry="16" fill="#07161A"/>
+      <circle class="eye-highlight eye-sparkle" cx="190" cy="114" r="5" fill="#fff" opacity="0.95"/>
+      <circle class="eye-pupil" cx="194" cy="120" r="3" fill="#061213"/>
+    </g>
+  </g>
+
+  <!-- Arms holding laptop -->
+  <rect x="88" y="148" width="16" height="10" rx="4" fill="var(--mascot-accent)" transform="rotate(-12 96 153)"/>
+  <rect x="216" y="148" width="16" height="10" rx="4" fill="var(--mascot-accent)" transform="rotate(12 224 153)"/>
+
+  <g transform="translate(96,150)">
+  <rect x="0" y="0" width="128" height="72" rx="6" fill="#0F1724"/>
+  <rect x="6" y="6" width="116" height="60" rx="4" fill="#E6EEF8"/>
+  <text x="64" y="36" font-family="monospace" font-size="10" fill="#0F1724" text-anchor="middle">console.log('hola');</text>
+  </g>
+
+  <!-- Feet -->
+  <rect x="124" y="204" width="20" height="10" rx="6" fill="var(--mascot-muted)"/>
+  <rect x="176" y="204" width="20" height="10" rx="6" fill="var(--mascot-muted)"/>
+
+</svg>

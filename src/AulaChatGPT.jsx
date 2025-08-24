@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { Brain, Sparkles, ShieldCheck, BookOpen, Pencil, HelpCircle, Target, Star, RefreshCw, Settings, Lightbulb, Award, Rocket, Link as LinkIcon } from 'lucide-react'
+import { Brain, Sparkles, ShieldCheck, BookOpen, Pencil, HelpCircle, Target, Star, RefreshCw, Settings, Lightbulb, Award, Rocket, Link as LinkIcon, Eye, EyeOff } from 'lucide-react'
 import { loadProgress, saveProgress } from './lib/storage'
 import { FancyCard, Pill, Button, ProgressBar, clsx } from './components/ui'
 import PromptBuilder from './modules/PromptBuilder'
@@ -9,9 +9,16 @@ import ImprovePrompt from './modules/ImprovePrompt'
 import Diagnosis from './modules/Diagnosis'
 import Footer from './components/Footer'
 import Toaster, { toast } from './components/Toaster'
+import MascotGuide, { mascotSpeak, setMascotSettings } from './components/MascotGuide'
+import { loadSettings, saveSettings } from './lib/storage'
 
 export default function AulaChatGPT() {
   const [tab, setTab] = useState('inicio')
+  // announce tab changes to the mascot
+  useEffect(() => {
+    mascotSpeak({ text: `Has cambiado a ${tab}`, mood: 'neutral', duration: 2000 })
+    try { window.dispatchEvent(new CustomEvent('mascot-bounce')) } catch {}
+  }, [tab])
   const [points, setPoints] = useState(0)
   const [streak, setStreak] = useState(0)
   const [badges, setBadges] = useState([])
@@ -28,22 +35,31 @@ export default function AulaChatGPT() {
 
   useEffect(()=> saveProgress({ tab, points, streak, badges }), [tab, points, streak, badges])
 
-  function addPoints(n, reason) { setPoints(p=>p+n); setStreak(s=>s+1); if (reason) toast(reason, n) }
-  function resetStreak(){ setStreak(0) }
-  function unlockBadge(name){ setBadges(b=> b.includes(name)? b: [...b, name]) }
+  const [appSettings, setAppSettings] = useState(loadSettings())
+
+  useEffect(()=> saveSettings(appSettings), [appSettings])
+  useEffect(()=> setMascotSettings(appSettings), [appSettings])
+
+  function addPoints(n, reason) { setPoints(p=>p+n); setStreak(s=>s+1); if (reason) toast(reason, n); mascotSpeak({ text: reason || `Has ganado ${n} puntos`, mood: 'happy' }) }
+  function resetStreak(){ setStreak(0); mascotSpeak({ text: 'Racha finalizada. Sigue intentándolo.', mood: 'sad' }) }
+  function unlockBadge(name){ setBadges(b=> b.includes(name)? b: [...b, name]); mascotSpeak({ text: `¡Has conseguido el logro ${name}!`, mood: 'cheer' }) }
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-sky-50 via-white to-indigo-50 text-slate-800">
       <header className="sticky top-0 z-20 backdrop-blur bg-white/70 border-b border-slate-200">
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center gap-3">
           <Pill icon={Brain} tone="blue">Aula ChatGPT</Pill>
-          <nav className="ml-auto flex gap-2">
+          <nav className="ml-auto flex gap-2 items-center">
             <TopTab icon={Sparkles} id="builder" current={tab} setTab={setTab} label="Constructor de Prompts" />
             <TopTab icon={ShieldCheck} id="etica" current={tab} setTab={setTab} label="Ética y Seguridad" />
             <TopTab icon={BookOpen} id="verificacion" current={tab} setTab={setTab} label="Verificación" />
             <TopTab icon={Pencil} id="mejora" current={tab} setTab={setTab} label="Redacta Mejor" />
             <TopTab icon={HelpCircle} id="diagnostico" current={tab} setTab={setTab} label="Diagnóstico" />
             <TopTab icon={Target} id="inicio" current={tab} setTab={setTab} label="Inicio" />
+            {/* Global mascot toggle */}
+            <button title={appSettings.mascotVisible? 'Ocultar mascota' : 'Mostrar mascota'} onClick={() => setAppSettings(s => ({ ...s, mascotVisible: !s.mascotVisible }))} className="ml-2 p-2 rounded-lg hover:bg-slate-100">
+              {appSettings.mascotVisible ? <Eye size={16}/> : <EyeOff size={16}/>} 
+            </button>
           </nav>
         </div>
       </header>
@@ -109,11 +125,20 @@ export default function AulaChatGPT() {
               <p>• Evaluación: rubricable por claridad, ética y verificación.</p>
             </div>
           </FancyCard>
+
+          <FancyCard>
+            <h3 className="text-lg font-bold mb-2 flex items-center gap-2"><Settings/> Avatar</h3>
+            <div className="text-sm text-slate-700 space-y-2">
+              <label className="flex items-center gap-2"><input type="checkbox" checked={appSettings.mascotVisible} onChange={e => setAppSettings(s => ({ ...s, mascotVisible: e.target.checked }))} /> Mostrar mascota</label>
+              <label className="flex items-center gap-2"><input type="checkbox" checked={appSettings.mascotMuted} onChange={e => setAppSettings(s => ({ ...s, mascotMuted: e.target.checked }))} /> Silenciar mensajes</label>
+            </div>
+          </FancyCard>
         </aside>
       </main>
 
-      <Footer />
-      <Toaster />
+  <Footer />
+  <Toaster />
+  <MascotGuide />
     </div>
   )
 }

@@ -4,3 +4,74 @@
 
 /* Añade aquí reglas globales si las necesitas */
 body { @apply bg-slate-50; }
+ 
+:root {
+	--mascot-primary: #3AA078;
+	--mascot-secondary: #6CC2A1;
+	--mascot-accent: #0F766E;
+	--mascot-muted: #2E7A5F;
+}
+
+.mascot-wave { transform-origin: 160px 120px; }
+.mascot-wave.animate { animation: wave 1s ease-in-out infinite; }
+
+@keyframes wave {
+	0% { transform: rotate(0deg); }
+	25% { transform: rotate(14deg); }
+	50% { transform: rotate(0deg); }
+	75% { transform: rotate(-8deg); }
+	100% { transform: rotate(0deg); }
+}
+
+/* Inline SVG wrapper so CSS variables apply to internal fills/strokes */
+.mascot-svg { width: 96px; height: 96px; display: inline-block; }
+.mascot-svg svg { width: 100%; height: 100%; display: block; }
+.mascot-svg { pointer-events: auto; }
+.mascot-svg .mascot-body { fill: var(--mascot-primary); }
+.mascot-svg .mascot-accent { fill: var(--mascot-secondary); }
+.mascot-svg .mascot-stroke { stroke: var(--mascot-accent); }
+
+/* Eye animations: blink and sparkle */
+.mascot-svg .eye-iris { transform-origin: center; transition: transform 180ms ease; }
+.mascot-svg .eye-pupil { transform-origin: center; transition: transform 180ms ease; }
+.mascot-svg .eye-highlight { opacity: 0.95; transition: opacity 220ms ease; }
+
+/* Make sure transforms on SVG shapes behave as expected */
+.mascot-svg svg, .mascot-svg svg * { transform-box: fill-box; transform-origin: center; }
+
+
+@keyframes blink {
+	0% { transform: scaleY(1); }
+	48% { transform: scaleY(1); }
+	50% { transform: scaleY(0.04); }
+	52% { transform: scaleY(0.04); }
+	100% { transform: scaleY(1); }
+}
+
+@keyframes sparkle {
+	0% { opacity: 0; transform: translateY(-2px) scale(0.92); }
+	35% { opacity: 1; transform: translateY(0) scale(1.02); }
+	100% { opacity: 0; transform: translateY(-4px) scale(1); }
+}
+
+/* Apply animations with longer defaults and small random offsets so blinking is infrequent and desynchronized */
+.mascot-svg .eye-blink { animation: blink var(--blink-duration, 10s) linear infinite; animation-delay: calc(var(--blink-offset, 0s)); }
+.mascot-svg .eye-sparkle { animation: sparkle var(--sparkle-duration, 12s) ease-in-out infinite; animation-delay: calc(var(--sparkle-offset, 0s)); }
+
+/* Also apply animations to eyes by default so older SVGs animate without edits */
+.mascot-svg .eye-iris { animation: blink var(--blink-duration, 10s) linear infinite; animation-delay: var(--blink-offset, 0s); }
+.mascot-svg .eye-highlight { animation: sparkle var(--sparkle-duration, 12s) ease-in-out infinite; animation-delay: var(--sparkle-offset, 0s); }
+
+/* Bounce (small attention grab) */
+@keyframes mascot-bounce {
+	0% { transform: translateY(0); }
+	30% { transform: translateY(-6px); }
+	50% { transform: translateY(0); }
+	100% { transform: translateY(0); }
+}
+.mascot-svg.bounce { animation: mascot-bounce var(--bounce-duration, 600ms) ease; }
+
+/* Reduce motion respect */
+@media (prefers-reduced-motion: reduce) {
+	.mascot-svg .eye-blink, .mascot-svg .eye-sparkle, .mascot-wave.animate { animation: none !important; }
+}

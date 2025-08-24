@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { FancyCard, Pill, Button } from '../components/ui'
 import { ETHICS_SCENARIOS } from '../lib/data'
+import { mascotSpeak } from '../components/MascotGuide'
 
 export default function EthicsGame({ onScore }) {
   const [i, setI] = useState(0);
@@ -14,7 +15,8 @@ export default function EthicsGame({ onScore }) {
     const next = i + 1;
     if (next >= ETHICS_SCENARIOS.length) {
       setFinished(true);
-      onScore(right + (ok ? 1 : 0));
+  onScore(right + (ok ? 1 : 0));
+  mascotSpeak({ text: `Has completado el juego de ética con ${right + (ok ? 1 : 0)} aciertos.`, mood: (right + (ok ? 1 : 0)) >= Math.ceil(ETHICS_SCENARIOS.length/2) ? 'happy' : 'sad' })
     } else setI(next);
   }
 

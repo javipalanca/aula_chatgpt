@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { FancyCard, Button, clsx } from '../components/ui'
+import { mascotSpeak } from '../components/MascotGuide'
 import { VERIF_QUIZ } from '../lib/data'
 
 export default function VerifyQuiz({ onScore }) {
@@ -7,7 +8,7 @@ export default function VerifyQuiz({ onScore }) {
   const [done, setDone] = useState(false);
 
   function set(i, v) { const copy = [...answers]; copy[i] = v; setAnswers(copy); }
-  function finish() { let score = 0; answers.forEach((a,i)=>{ if (a===VERIF_QUIZ[i].a) score++; }); setDone(true); onScore(score); }
+  function finish() { let score = 0; answers.forEach((a,i)=>{ if (a===VERIF_QUIZ[i].a) score++; }); setDone(true); onScore(score); mascotSpeak({ text: `Has obtenido ${score} de ${VERIF_QUIZ.length}`, mood: score >= Math.ceil(VERIF_QUIZ.length/2) ? 'happy' : 'sad' }) }
 
   return (
     <FancyCard>
