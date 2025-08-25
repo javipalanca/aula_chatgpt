@@ -14,6 +14,10 @@ const SESSION_KEY = 'aula-session-id'
 const MEM = { progress: {}, settings: {}, classes: {} }
 // Track in-flight remote fetches to avoid spawning many concurrent requests
 const IN_FLIGHT = { progress: {}, settings: {} }
+// throttle for classes sync to avoid spamming the backend from many clients/components
+let _lastClassesSync = 0
+let _classesSyncPromise = null
+const CLASSES_SYNC_MIN_MS = 5000 // minimum interval between remote /api/classes calls
 
 function getSessionId() {
   try {
@@ -35,8 +39,8 @@ export function saveProgress(state) {
   }
   try {
     const id = getSessionId()
-    MEM.progress[id] = state
-    ;(async () => {
+  MEM.progress[id] = state;
+    (async () => {
       try {
         await fetch(`${API_BASE}/api/progress/${encodeURIComponent(id)}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ data: state }) })
       } catch (e) { console.warn('saveProgress remote failed', e) }
@@ -81,9 +85,9 @@ export function saveSettings(s) {
   }
   try {
     const id = getSessionId()
-    MEM.settings[id] = s
-    try { window.dispatchEvent(new CustomEvent('aula-chatgpt-settings', { detail: s })) } catch (e) {}
-    ;(async () => {
+  MEM.settings[id] = s;
+  try { window.dispatchEvent(new CustomEvent('aula-chatgpt-settings', { detail: s })) } catch (e) { console.warn('dispatch settings event failed', e) }
+    (async () => {
       try {
         await fetch(`${API_BASE}/api/settings/${encodeURIComponent(id)}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ data: s }) })
       } catch (e) { console.warn('saveSettings remote failed', e) }
@@ -171,18 +175,36 @@ export function listClasses() {
 
 export async function syncClassesRemote() {
   if (!USE_API) throw new Error('syncClassesRemote requires VITE_STORAGE_API')
-  try {
-    const r = await fetch(`${API_BASE}/api/classes`)
-    if (!r.ok) throw new Error('Failed to fetch classes')
-    const docs = await r.json()
-    const out = {}
-    for (const d of docs) {
-      out[d.id] = { id: d.id, code: d.id, name: d.name, teacherName: d.teacherName, meta: d.meta, createdAt: d.created_at || d.createdAt || Date.now(), active: d.active, passwordHash: d.passwordHash, participants: {}, challenges: d.challenges || [] }
+  const now = Date.now()
+  // If a sync happened recently, return the existing promise or cached classes
+  if (now - _lastClassesSync < CLASSES_SYNC_MIN_MS) {
+    if (_classesSyncPromise) return _classesSyncPromise
+    return MEM.classes
+  }
+  // If a sync is already inflight, reuse it
+  if (_classesSyncPromise) return _classesSyncPromise
+  _classesSyncPromise = (async () => {
+    try {
+      const r = await fetch(`${API_BASE}/api/classes`)
+      if (!r.ok) throw new Error('Failed to fetch classes')
+      const docs = await r.json()
+      const out = {}
+      for (const d of docs) {
+        out[d.id] = { id: d.id, code: d.id, name: d.name, teacherName: d.teacherName, meta: d.meta, createdAt: d.created_at || d.createdAt || Date.now(), active: d.active, passwordHash: d.passwordHash, participants: {}, challenges: d.challenges || [] }
+      }
+      MEM.classes = out;
+      try { window.dispatchEvent(new CustomEvent('aula-classes-updated', { detail: out })) } catch(e) { console.warn('dispatch aula-classes-updated failed', e) }
+      _lastClassesSync = Date.now()
+      return out
+    } catch (e) {
+      console.warn('syncClassesRemote failed', e)
+      throw e
+    } finally {
+      // clear inflight promise after a short delay so subsequent rapid calls reuse cache
+      setTimeout(() => { _classesSyncPromise = null }, 0)
     }
-    MEM.classes = out
-    try { window.dispatchEvent(new CustomEvent('aula-classes-updated', { detail: out })) } catch(e) {}
-    return out
-  } catch (e) { console.warn('syncClassesRemote failed', e); throw e }
+  })()
+  return _classesSyncPromise
 }
 
 export async function deleteClass(code) {
@@ -254,7 +276,7 @@ export async function joinClass(code, displayName, password = null) {
   const payload = { id: pid, classId: code, sessionId: sid, displayName: displayName || `Alumno-${sid.slice(0,5)}`, score: 0, progress: {}, lastSeen: Date.now() }
   const res = await fetch(`${API_BASE}/api/participants`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
   if (!res.ok) throw new Error('Failed to join class')
-  try { await syncClassesRemote() } catch(e){}
+  try { await syncClassesRemote() } catch(e){ console.warn('syncClassesRemote failed after joinClass', e) }
   return payload
 }
 
@@ -273,8 +295,48 @@ export async function postParticipantUpdate(code, { sessionId = getSessionId(), 
   const payload = { id: pid, classId: code, sessionId, displayName: `Alumno-${sessionId.slice(0,5)}`, scoreDelta: Number(scoreDelta) || 0, progress: progress || {}, lastSeen: Date.now() }
   const r = await fetch(`${API_BASE}/api/participants`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
   if (!r.ok) throw new Error('postParticipantUpdate failed')
-  try { await syncClassesRemote() } catch(e){}
+  try { await syncClassesRemote() } catch(e){ console.warn('syncClassesRemote failed', e) }
   return payload
+}
+
+// Heartbeat: keep-alive pings to show student is still connected. Uses WS if available, falls back to participant POST.
+let _heartbeatInterval = null
+export function startHeartbeat(classId, intervalMs = 5000) {
+  try {
+    stopHeartbeat()
+    const sendPing = async () => {
+      try {
+        const sid = getSessionId()
+        if (typeof _ws !== 'undefined' && _ws && _ws.readyState === WebSocket.OPEN) {
+          try { _ws.send(JSON.stringify({ type: 'ping', classId, sessionId: sid })) } catch(e) { console.warn('heartbeat ws send failed', e) }
+        } else if (USE_API) {
+          // fallback: update participant lastSeen via POST (no score change)
+          try { await fetch(`${API_BASE}/api/participants`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: `${classId}:${sid}`, classId, sessionId: sid, displayName: `Alumno-${sid.slice(0,5)}`, lastSeen: Date.now() }) }) } catch(e) { console.warn('heartbeat POST failed', e) }
+        }
+  } catch (e) { console.warn('heartbeat sendPing failed', e) }
+    }
+    // send immediately and then on interval
+    sendPing().catch(()=>{})
+    _heartbeatInterval = setInterval(()=>{ sendPing().catch(()=>{}) }, intervalMs)
+  } catch (e) { console.warn('startHeartbeat failed', e) }
+}
+
+export function stopHeartbeat() {
+  try {
+    if (_heartbeatInterval) { clearInterval(_heartbeatInterval); _heartbeatInterval = null }
+  } catch (e) { /* ignore */ }
+}
+
+// Leave class: mark participant as disconnected (used on unload / back)
+export async function leaveClass(code) {
+  if (!USE_API) return
+  try {
+    const sid = getSessionId()
+    const pid = `${code}:${sid}`
+    const payload = { id: pid, classId: code, sessionId: sid, displayName: `Alumno-${sid.slice(0,5)}`, connected: false, lastSeen: Date.now() }
+    await fetch(`${API_BASE}/api/participants`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
+  } catch (e) { console.warn('leaveClass failed', e) }
+  finally { try { stopHeartbeat() } catch(e){ console.warn('stopHeartbeat failed', e) } }
 }
 
 export async function createChallenge(code, { title = 'Reto', duration = 60, payload = {} } = {}) {
@@ -283,8 +345,8 @@ export async function createChallenge(code, { title = 'Reto', duration = 60, pay
   const cid = `${code}:${ch.id}`
   const r = await fetch(`${API_BASE}/api/challenges`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: cid, classId: code, ...ch }) })
   if (!r.ok) throw new Error('createChallenge failed')
-  try { await syncClassesRemote() } catch(e){}
-  try { window.dispatchEvent(new CustomEvent('aula-challenge', { detail: { code, challenge: ch } })) } catch(e){}
+  try { await syncClassesRemote() } catch(e){ console.warn('syncClassesRemote failed after createChallenge', e) }
+  try { window.dispatchEvent(new CustomEvent('aula-challenge', { detail: { code, challenge: ch } })) } catch(e){ console.warn('dispatch aula-challenge failed', e) }
   return ch
 }
 
@@ -293,7 +355,7 @@ export function resetClass(code) {
   ;(async () => {
     try {
       await fetch(`${API_BASE}/api/classes/${encodeURIComponent(code)}`, { method: 'DELETE' })
-      try { await syncClassesRemote() } catch(e){}
+  try { await syncClassesRemote() } catch(e){ console.warn('syncClassesRemote failed in resetClass', e) }
     } catch (e) { console.warn('resetClass failed', e) }
   })()
 }
@@ -360,11 +422,11 @@ export function initRealtime(baseUrl) {
 }
 
   // Subscribe client to a specific classId over the active websocket.
-  export function subscribeToClass(classId) {
+  export function subscribeToClass(classId, { role = 'student' } = {}) {
       try {
         // ensure websocket exists
         if (!_ws) initRealtime()
-        const payload = JSON.stringify({ type: 'subscribe', classId })
+      const payload = JSON.stringify({ type: 'subscribe', classId, sessionId: getSessionId(), role })
         // if open, send immediately
         if (_ws && _ws.readyState === WebSocket.OPEN) {
           try { _ws.send(payload) } catch(e) { console.warn('subscribeToClass send immediate failed', e) }

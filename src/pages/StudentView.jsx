@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { initRealtime, subscribeToClass, joinClass, submitAnswer, getSessionId } from '../lib/storage'
+import { startHeartbeat, stopHeartbeat, leaveClass } from '../lib/storage'
 import { Button, clsx } from '../components/ui'
 
 export default function StudentView({ classCode, displayName, onBack }) {
@@ -19,7 +20,9 @@ export default function StudentView({ classCode, displayName, onBack }) {
   // join the class via API
   ;(async () => {
       try {
-        await joinClass(classCode, displayName || `Alumno-${getSessionId().slice(0,5)}`)
+  await joinClass(classCode, displayName || `Alumno-${getSessionId().slice(0,5)}`)
+  // start heartbeat to mark student as connected periodically (every 5s)
+  try { startHeartbeat(classCode, 5000) } catch(e) { console.warn('startHeartbeat failed', e) }
       } catch (e) {
         console.warn('joinClass failed', e)
       }
@@ -59,8 +62,15 @@ export default function StudentView({ classCode, displayName, onBack }) {
     }
 
     window.addEventListener('aula-realtime', onRealtime)
-    return () => window.removeEventListener('aula-realtime', onRealtime)
-  }, [classCode, currentQuestion])
+    // on unload or leaving this view, inform server we left and stop heartbeat
+    const cleanup = async () => {
+      try { await leaveClass(classCode) } catch(e) { console.warn('leaveClass on cleanup failed', e) }
+      try { stopHeartbeat() } catch(e) { console.warn('stopHeartbeat on cleanup failed', e) }
+      try { window.removeEventListener('aula-realtime', onRealtime) } catch(e) { console.warn('remove aula-realtime listener failed', e) }
+    }
+    window.addEventListener('beforeunload', cleanup)
+    return () => { cleanup() }
+  }, [classCode])
 
   // local seconds countdown
   useEffect(()=>{

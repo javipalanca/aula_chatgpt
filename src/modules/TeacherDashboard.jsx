@@ -33,9 +33,9 @@ export default function TeacherDashboard({ onClose }) {
 
   useEffect(()=>{
     // Populate from cache first, then sync with server and update when available.
-    setClasses(listClasses())
-    let mounted = true
-    syncClassesRemote().then(()=> { if (mounted) setClasses(listClasses()) }).catch(()=>{})
+  setClasses(listClasses())
+  let mounted = true
+  syncClassesRemote().then(()=> { if (mounted) setClasses(listClasses()) }).catch((e)=>{ console.warn('syncClassesRemote failed', e) })
     function onUpdate(e) { try { setClasses(Object.values(e.detail || listClasses())) } catch(_) { setClasses(listClasses()) } }
     window.addEventListener('aula-classes-updated', onUpdate)
     return ()=> { mounted = false; window.removeEventListener('aula-classes-updated', onUpdate) }
@@ -48,7 +48,7 @@ export default function TeacherDashboard({ onClose }) {
       // initialize websocket
       initRealtime()
   // subscribe to updates for this class
-  try { subscribeToClass(selected) } catch(e) { console.warn('subscribeToClass failed', e) }
+  try { subscribeToClass(selected, { role: 'teacher' }) } catch(e) { console.warn('subscribeToClass failed', e) }
       // fetch initial participants
       fetchParticipants()
     } else {
@@ -250,7 +250,7 @@ export default function TeacherDashboard({ onClose }) {
     setLastQuestionResults(null)
     setSelectedCorrect(null)
     setLiveAnswers(prev => ({ ...prev, [q.id]: { total: 0, counts: {} } }))
-    try { subscribeToClass(selected) } catch(e) { console.warn('subscribeToClass on launch failed', e) }
+  try { subscribeToClass(selected, { role: 'teacher' }) } catch(e) { console.warn('subscribeToClass on launch failed', e) }
     toast('Pregunta lanzada: ' + q.title)
       }).catch(err => toast('No se pudo lanzar: ' + (err.message || err)))
   }
@@ -303,20 +303,28 @@ export default function TeacherDashboard({ onClose }) {
                   <div className="text-3xl font-bold mb-3">{questionRunning ? questionRunning.title : 'Sin pregunta activa'}</div>
                   {questionRunning && questionRunning.options && questionRunning.options.length>0 && (
                     <div className="grid gap-3 mb-4">
-                      {questionRunning.options.map((opt,i) => (
-                        <div key={i} className="p-4 rounded bg-white/5 text-left">
-                          <div className="font-medium">{String.fromCharCode(65+i)}. {opt}</div>
-                          {liveAnswers[questionRunning.id] && (
-                            <div className="mt-2 flex items-center gap-2">
-                              <div className="text-sm opacity-70">{(liveAnswers[questionRunning.id].counts && (liveAnswers[questionRunning.id].counts[String(opt)] || liveAnswers[questionRunning.id].counts[String(i)])) || 0} respuestas</div>
-                              <div className="flex-1 bg-white/10 h-2 rounded overflow-hidden">
-                                <div style={{ width: `${Math.min(100, ((liveAnswers[questionRunning.id].counts && (liveAnswers[questionRunning.id].counts[String(opt)] || liveAnswers[questionRunning.id].counts[String(i)])) || 0) / Math.max(1, (liveAnswers[questionRunning.id].total || 1)) * 100)}%` }} className="h-2 bg-blue-500"></div>
+                      {questionRunning.options.map((opt,i) => {
+                        const isCorrect = selectedCorrect !== null && String(selectedCorrect) === String(opt)
+                        return (
+                          <div key={i} className={clsx('p-4 rounded text-left', isCorrect ? 'bg-green-600 text-white' : 'bg-white/5')}>
+                            <div className="font-medium">{String.fromCharCode(65+i)}. {opt}</div>
+                            {/* Show per-option counts only when final results are available (lastQuestionResults) */}
+                            { lastQuestionResults && lastQuestionResults.distribution && (
+                              <div className="mt-2 flex items-center gap-2">
+                                <div className="text-sm opacity-70">{(lastQuestionResults.distribution[String(opt)] || 0)} respuestas</div>
+                                <div className="flex-1 bg-white/10 h-2 rounded overflow-hidden">
+                                  <div style={{ width: `${Math.min(100, ((lastQuestionResults.distribution[String(opt)] || 0) / Math.max(1, Object.values(lastQuestionResults.distribution || {}).reduce((a,b)=>a+b,0)) * 100))}%` }} className="h-2 bg-blue-500"></div>
+                                </div>
                               </div>
-                            </div>
-                          )}
-                        </div>
-                      ))}
+                            )}
+                          </div>
+                        )
+                      })}
                     </div>
+                  )}
+                  {/* Show only total answers received while question is active */}
+                  { questionRunning && (
+                    <div className="text-sm opacity-70 mb-4">Respuestas recibidas: {(liveAnswers[questionRunning.id] && liveAnswers[questionRunning.id].total) || 0}</div>
                   )}
                   <div className="text-6xl font-mono mb-4">{secondsLeft}s</div>
                   <div className="flex gap-3 items-center">
@@ -353,10 +361,10 @@ export default function TeacherDashboard({ onClose }) {
               <div className="w-full md:w-96 mt-6 md:mt-0">
                 <div className="mb-4">
                   <h4 className="font-semibold">Participantes</h4>
-                  <div className="mt-3 space-y-2 max-h-72 overflow-auto">
+                    <div className="mt-3 space-y-2 max-h-72 overflow-auto">
                     {participants.slice().sort((a,b)=> (b.score||0)-(a.score||0)).map(p => (
-                      <div key={p.sessionId} className="p-2 rounded border bg-white/5 flex items-center justify-between">
-                        <div className="font-semibold">{p.displayName}</div>
+                      <div key={p.sessionId} className={clsx('p-2 rounded border flex items-center justify-between', p.connected === false ? 'bg-red-50 opacity-60' : 'bg-white/5')}>
+                        <div className="font-semibold">{p.displayName}{p.connected === false && (<span className="ml-2 text-xs text-red-600">(desconectado)</span>)}</div>
                         <div className="font-bold">{p.score||0}</div>
                       </div>
                     ))}
