@@ -11,6 +11,10 @@ import Footer from './components/Footer'
 import Toaster, { toast } from './components/Toaster'
 import MascotGuide, { mascotSpeak, setMascotSettings } from './components/MascotGuide'
 import { loadSettings, saveSettings } from './lib/storage'
+import TeacherDashboard from './modules/TeacherDashboard'
+import ClassJoin from './components/ClassJoin'
+import { postParticipantUpdate } from './lib/storage'
+import ChallengeTimer from './components/ChallengeTimer'
 
 export default function AulaChatGPT() {
   const [tab, setTab] = useState('inicio')
@@ -36,13 +40,24 @@ export default function AulaChatGPT() {
   useEffect(()=> saveProgress({ tab, points, streak, badges }), [tab, points, streak, badges])
 
   const [appSettings, setAppSettings] = useState(loadSettings())
+  const [showTeacher, setShowTeacher] = useState(false)
+  const [showTeacherPrompt, setShowTeacherPrompt] = useState(false)
+  const [teacherPwdInput, setTeacherPwdInput] = useState('')
+  const [showJoin, setShowJoin] = useState(false)
+  const [classCode, setClassCode] = useState(null)
 
   useEffect(()=> saveSettings(appSettings), [appSettings])
   useEffect(()=> setMascotSettings(appSettings), [appSettings])
 
+  const TEACHER_PWD = import.meta.env.VITE_TEACHER_PASSWORD || ''
+
   function addPoints(n, reason) { setPoints(p=>p+n); setStreak(s=>s+1); if (reason) toast(reason, n); mascotSpeak({ text: reason || `Has ganado ${n} puntos`, mood: 'happy' }) }
   function resetStreak(){ setStreak(0); mascotSpeak({ text: 'Racha finalizada. Sigue intentándolo.', mood: 'sad' }) }
   function unlockBadge(name){ setBadges(b=> b.includes(name)? b: [...b, name]); mascotSpeak({ text: `¡Has conseguido el logro ${name}!`, mood: 'cheer' }) }
+
+  function postScoreToClass(delta) {
+    try { if (classCode) postParticipantUpdate(classCode, { scoreDelta: delta }) } catch (e) { console.warn('postScoreToClass failed', e) }
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-sky-50 via-white to-indigo-50 text-slate-800">
@@ -50,12 +65,12 @@ export default function AulaChatGPT() {
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center gap-3">
           <Pill icon={Brain} tone="blue">Aula ChatGPT</Pill>
           <nav className="ml-auto flex gap-2 items-center">
-            <TopTab icon={Sparkles} id="builder" current={tab} setTab={setTab} label="Constructor de Prompts" />
-            <TopTab icon={ShieldCheck} id="etica" current={tab} setTab={setTab} label="Ética y Seguridad" />
-            <TopTab icon={BookOpen} id="verificacion" current={tab} setTab={setTab} label="Verificación" />
-            <TopTab icon={Pencil} id="mejora" current={tab} setTab={setTab} label="Redacta Mejor" />
-            <TopTab icon={HelpCircle} id="diagnostico" current={tab} setTab={setTab} label="Diagnóstico" />
             <TopTab icon={Target} id="inicio" current={tab} setTab={setTab} label="Inicio" />
+            <TopTab icon={HelpCircle} id="diagnostico" current={tab} setTab={setTab} label="Diagnóstico" />
+            <TopTab icon={Pencil} id="mejora" current={tab} setTab={setTab} label="Redacta Mejor" />
+            <TopTab icon={BookOpen} id="verificacion" current={tab} setTab={setTab} label="Verificación" />
+            <TopTab icon={ShieldCheck} id="etica" current={tab} setTab={setTab} label="Ética y Seguridad" />
+            <TopTab icon={Sparkles} id="builder" current={tab} setTab={setTab} label="Constructor de Prompts" />
             {/* Global mascot toggle */}
             <button title={appSettings.mascotVisible? 'Ocultar mascota' : 'Mostrar mascota'} onClick={() => setAppSettings(s => ({ ...s, mascotVisible: !s.mascotVisible }))} className="ml-2 p-2 rounded-lg hover:bg-slate-100">
               {appSettings.mascotVisible ? <Eye size={16}/> : <EyeOff size={16}/>} 
@@ -67,14 +82,15 @@ export default function AulaChatGPT() {
       <main className="max-w-6xl mx-auto px-4 py-6 grid lg:grid-cols-3 gap-6">
         <section className="lg:col-span-2 flex flex-col gap-6">
           {tab === 'inicio' && <Intro onStart={() => setTab('builder')} />}
-          {tab === 'builder' && <PromptBuilder onScore={(n)=>{ addPoints(n, `+${n} puntos por buen prompt`); unlockBadge('Constructor/a de Prompts') }} />}
-          {tab === 'etica' && <EthicsGame onScore={(n)=>{ n>0? addPoints(n, `+${n} puntos en Ética`) : resetStreak(); if (n>=8) unlockBadge('Guardián/a Ético/a') }} />}
-          {tab === 'verificacion' && <VerifyQuiz onScore={(n)=>{ addPoints(n, `+${n} puntos en Verificación`); if (n>=4) unlockBadge('Detective de Fuentes') }} />}
-          {tab === 'mejora' && <ImprovePrompt onScore={(n)=>{ addPoints(n, `+${n} puntos por mejorar`); if (n>=2) unlockBadge('Editor/a de Preguntas') }} />}
-          {tab === 'diagnostico' && <Diagnosis onScore={(ok)=>{ addPoints(ok?3:0, ok?'+3 puntos por diagnosticar':undefined); if (ok) unlockBadge('Cazador/a de Fakes') }} />}
+          {tab === 'builder' && <PromptBuilder onScore={(n)=>{ addPoints(n, `+${n} puntos por buen prompt`); postScoreToClass(n); unlockBadge('Constructor/a de Prompts') }} />}
+          {tab === 'etica' && <EthicsGame onScore={(n)=>{ n>0? addPoints(n, `+${n} puntos en Ética`) : resetStreak(); if (n>=8) unlockBadge('Guardián/a Ético/a'); if (n>0) postScoreToClass(n) }} />}
+          {tab === 'verificacion' && <VerifyQuiz onScore={(n)=>{ addPoints(n, `+${n} puntos en Verificación`); postScoreToClass(n); if (n>=4) unlockBadge('Detective de Fuentes') }} />}
+          {tab === 'mejora' && <ImprovePrompt onScore={(n)=>{ addPoints(n, `+${n} puntos por mejorar`); postScoreToClass(n); if (n>=2) unlockBadge('Editor/a de Preguntas') }} />}
+          {tab === 'diagnostico' && <Diagnosis onScore={(ok)=>{ addPoints(ok?3:0, ok?'+3 puntos por diagnosticar':undefined); if (ok) { unlockBadge('Cazador/a de Fakes'); postScoreToClass(3) } }} />}
         </section>
 
         <aside className="lg:col-span-1 flex flex-col gap-6">
+          {/* Storage status (using local or configured API) */}
           <FancyCard>
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-bold flex items-center gap-2"><Star className="text-amber-500"/> Progreso</h3>
@@ -124,6 +140,14 @@ export default function AulaChatGPT() {
               <p>• Reto final: cada pareja crea un <i>prompt</i> excelente y explica cómo verificó resultados.</p>
               <p>• Evaluación: rubricable por claridad, ética y verificación.</p>
             </div>
+              <div className="mt-3 flex gap-2">
+              <Button onClick={() => {
+                if (!TEACHER_PWD) { toast('Modo docente no configurado. Añade VITE_TEACHER_PASSWORD en .env'); return }
+                setShowTeacherPrompt(true)
+              }} variant="primary">Abrir Modo Docente</Button>
+              <Button onClick={()=> setShowJoin(true)} variant="ghost">Unirse a clase</Button>
+              {classCode && <div className="ml-auto text-sm">Unido a: <b>{classCode}</b></div>}
+            </div>
           </FancyCard>
 
           <FancyCard>
@@ -139,6 +163,40 @@ export default function AulaChatGPT() {
   <Footer />
   <Toaster />
   <MascotGuide />
+  <ChallengeTimer />
+  {showTeacher && (
+    <div className="fixed inset-0 z-50 flex items-start justify-center p-6">
+      <div className="bg-black/40 absolute inset-0" onClick={()=> setShowTeacher(false)} />
+      <div className="relative w-full max-w-4xl bg-white rounded-2xl shadow-lg p-4 z-10">
+        <TeacherDashboard onClose={()=> setShowTeacher(false)} />
+      </div>
+    </div>
+  )}
+  {showJoin && (
+    <ClassJoin onClose={() => setShowJoin(false)} onJoined={({ classCode: c }) => { setClassCode(c); setShowJoin(false); toast('Unido a ' + c) }} />
+  )}
+  {showTeacherPrompt && (
+    <div className="fixed inset-0 z-60 flex items-center justify-center p-6">
+      <div className="bg-black/40 absolute inset-0" onClick={()=> { setShowTeacherPrompt(false); setTeacherPwdInput('') }} />
+      <div className="relative w-full max-w-md bg-white rounded-xl shadow-lg p-6 z-10">
+        <h3 className="text-lg font-bold mb-3">Acceso Modo Docente</h3>
+        <p className="text-sm text-slate-700 mb-4">Introduce la contraseña de docente para abrir el panel.</p>
+        <input autoFocus type="password" value={teacherPwdInput} onChange={e => setTeacherPwdInput(e.target.value)} className="w-full p-2 border rounded mb-3" placeholder="Contraseña de docente" />
+        <div className="flex gap-2 justify-end">
+          <Button variant="ghost" onClick={() => { setShowTeacherPrompt(false); setTeacherPwdInput('') }}>Cancelar</Button>
+          <Button onClick={() => {
+            if (teacherPwdInput === TEACHER_PWD) {
+              setShowTeacherPrompt(false)
+              setTeacherPwdInput('')
+              setShowTeacher(true)
+            } else {
+              toast('Contraseña incorrecta')
+            }
+          }} variant="primary">Entrar</Button>
+        </div>
+      </div>
+    </div>
+  )}
     </div>
   )
 }

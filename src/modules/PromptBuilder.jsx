@@ -102,14 +102,14 @@ export default function PromptBuilder({ onScore }) {
               const t = extractText(p)
               if (t) responses.push(t)
               continue
-            } catch (e) {}
+            } catch (e) { console.warn('prompt builder inner parse failed', e) }
           }
           // try parse line as JSON
           try {
             const p = JSON.parse(trimmed)
             const t = extractText(p)
             if (t) { responses.push(t); continue }
-          } catch (e) {}
+          } catch (e) { console.warn('prompt builder parse failed', e) }
           // fallback regex for "response": "..."
           const rx = /"response"\s*:\s*"((?:\\.|[^"\\])*)"/g
           let m

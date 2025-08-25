@@ -5,7 +5,7 @@ import { Brain, Sparkles, ShieldCheck, ThumbsUp, ThumbsDown, Lightbulb, Star, Re
  * Aula ChatGPT — Juego y Taller Interactivo (ESO/Bach)
  * ----------------------------------------------------
  * Una aplicación de una sola página para enseñar BUENOS usos de ChatGPT
- * de forma divertida y amena. Incluye:
+ *          <small className="block text-xs text-slate-500">Consejo: añade <b>criterios de calidad</b> (por ejemplo, &quot;si falta información, haz 3 preguntas primero&quot;).</small>de forma divertida y amena. Incluye:
  *  - Constructor de Prompts (Prompt Builder) con puntuación por buenas prácticas
  *  - Juego de Ética y Seguridad (escenarios: ¿Adecuado o No Adecuado?)
  *  - Reto de Verificación de Fuentes (quiz rápido)
@@ -481,7 +481,7 @@ function PromptBuilder({ onScore }) {
             <Button onClick={() => { navigator.clipboard.writeText(preview); toast("Prompt copiado"); }} variant="primary">Copiar</Button>
             <Button onClick={handleScore} variant="success">Evaluar y sumar puntos</Button>
           </div>
-          <small className="block text-xs text-slate-500">Consejo: añade <b>criterios de calidad</b> (por ejemplo, \"si falta información, haz 3 preguntas primero\").</small>
+          <small className="block text-xs text-slate-500">Consejo: añade <b>criterios de calidad</b> (por ejemplo, &quot;si falta información, haz 3 preguntas primero&quot;).</small>
         </div>
       </div>
     </FancyCard>

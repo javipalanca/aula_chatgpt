@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { FancyCard, Button, clsx } from '../components/ui'
+import DiagnosisBoss from './DiagnosisBoss'
 import { RED_FLAGS_SAMPLE } from '../lib/data'
 import { CheckCircle2, XCircle } from 'lucide-react'
 import { mascotSpeak } from '../components/MascotGuide'
@@ -8,6 +9,7 @@ export default function Diagnosis({ onScore }) {
   const [selected, setSelected] = useState([]);
   const [checked, setChecked] = useState(false);
   const correctSet = new Set(RED_FLAGS_SAMPLE.correct);
+  const [bossOpen, setBossOpen] = useState(false)
 
   function toggle(id) { setSelected((arr)=> arr.includes(id)? arr.filter(x=>x!==id) : [...arr, id]); }
   function finish() {
@@ -47,6 +49,10 @@ export default function Diagnosis({ onScore }) {
             )}</p>
           )}
         </div>
+      </div>
+      <div className="mt-4">
+        <Button variant="primary" onClick={()=> setBossOpen(true)}>Iniciar Boss Fight</Button>
+        {bossOpen && <div className="mt-4"><DiagnosisBoss onFinishAll={(results)=> { console.log('boss results', results); setBossOpen(false); }} /></div>}
       </div>
     </FancyCard>
   )
