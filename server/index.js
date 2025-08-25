@@ -32,6 +32,22 @@ try {
   const answers = db.collection('answers')
   const diagnosisResults = db.collection('diagnosis_results')
 
+  // Helper: fetch and normalize participants for teacher views (only connected by default)
+  const fetchConnectedParticipants = async (classId, { includeDisconnected = false } = {}) => {
+    const q = includeDisconnected ? { classId } : { classId, connected: true }
+    const docs = await participants.find(q).toArray()
+    const out = []
+    for (const d of docs) {
+      if (!d) continue
+      // Skip entries without a sessionId
+      if (!d.sessionId) continue
+      const sid = String(d.sessionId)
+      const name = (d.displayName && String(d.displayName).trim()) ? String(d.displayName).trim() : `Alumno-${sid.slice(0,5)}`
+      out.push({ sessionId: sid, displayName: name, score: d.score || 0, lastSeen: d.lastSeen, connected: !!d.connected })
+    }
+    return out
+  }
+
   // WebSocket server for real-time updates
   const wss = new WebSocketServer({ noServer: true })
   const wsClients = new Set()
@@ -44,6 +60,9 @@ try {
   // In-memory cooldown map to avoid frequent writes for participant lastSeen updates
   const participantLastPersist = new Map()
   const PARTICIPANT_MIN_PERSIST_MS = 5000
+  // In-memory map to throttle heartbeat broadcasts to teacher UIs
+  const participantLastBroadcast = new Map()
+  const PARTICIPANT_BROADCAST_MIN_MS = 2000
   const broadcast = (data, targetClassId) => {
     const raw = JSON.stringify(data)
     let targets = []
@@ -137,8 +156,7 @@ try {
   // By default return only currently connected participants (responding to heartbeat).
   // If the caller sets includeDisconnected=true, return everyone.
   const includeDisconnected = String(req.query.includeDisconnected || '').toLowerCase() === 'true'
-  const q = includeDisconnected ? { classId } : { classId, connected: true }
-  const docs = await participants.find(q).toArray()
+  const docs = await fetchConnectedParticipants(classId, { includeDisconnected: includeDisconnected })
   return res.json(docs)
   })
   app.post('/api/participants', async (req, res) => {
@@ -169,8 +187,10 @@ try {
       }
       // notify websocket clients about updated participants for the class
     try {
-  const docs = await participants.find({ classId: payload.classId, connected: true }).toArray()
-  broadcast({ type: 'participants-updated', classId: payload.classId, participants: docs }, payload.classId)
+  try {
+    const docs = await fetchConnectedParticipants(payload.classId)
+    broadcast({ type: 'participants-updated', classId: payload.classId, participants: docs }, payload.classId)
+  } catch(e) { console.warn('broadcast participants-updated failed', e) }
     } catch(e) { console.warn('broadcast participants-updated failed', e) }
       return res.json({ ok: true })
     } catch (err) {
@@ -269,11 +289,11 @@ try {
         } catch(e) { console.error('score update failed', e) }
       }
       // Fetch updated participants
-      const updated = await participants.find({ classId }).toArray()
+  const updated = await fetchConnectedParticipants(classId, { includeDisconnected: true })
   // Broadcast results and participants update (only connected participants for teacher views)
   try { broadcast({ type: 'question-results', classId, questionId, distribution, correctSessions, correctAnswer }, classId) } catch(e) { console.warn('broadcast question-results failed', e) }
   try {
-    const connected = await participants.find({ classId, connected: true }).toArray()
+    const connected = await fetchConnectedParticipants(classId)
     broadcast({ type: 'participants-updated', classId, participants: connected }, classId)
   } catch(e) { console.warn('broadcast participants-updated failed', e) }
   // clear active question for this class so new subscribers won't receive it
@@ -492,7 +512,7 @@ try {
                 // use upsert:true so if joinClass hasn't yet created the participant due to race, we still mark connected
                 await participants.updateOne({ classId: cid, sessionId }, { $set: { lastSeen: new Date(), connected: true } }, { upsert: true })
                 try {
-                  const docs = await participants.find({ classId: cid, connected: true }).toArray()
+                  const docs = await fetchConnectedParticipants(cid)
                   broadcast({ type: 'participants-updated', classId: cid, participants: docs }, cid)
                 } catch(e) { console.warn('fetch participants after subscribe failed', e) }
               }
@@ -527,7 +547,7 @@ try {
                   // record persist time to avoid immediate subsequent writes
                   try { participantLastPersist.set(`${cid}:${sid}`, Date.now()) } catch(e) { /* ignore */ }
                 try {
-                  const docs = await participants.find({ classId: cid, connected: true }).toArray()
+                  const docs = await fetchConnectedParticipants(cid)
                   broadcast({ type: 'participants-updated', classId: cid, participants: docs }, cid)
                 } catch (e) { console.warn('broadcast participants-updated after ping failed', e) }
               } else {
@@ -544,10 +564,47 @@ try {
                     }
                   } catch(e) { console.warn('update lastSeen on ping failed', e) }
               }
+              // Broadcast a lightweight heartbeat event (throttled) so teacher UIs can update presence quickly
+              try {
+                const hbKey = `${cid}:${sid}`
+                const nowB = Date.now()
+                const lastB = participantLastBroadcast.get(hbKey) || 0
+                if (nowB - lastB >= (typeof PARTICIPANT_BROADCAST_MIN_MS !== 'undefined' ? PARTICIPANT_BROADCAST_MIN_MS : 2000)) {
+                  participantLastBroadcast.set(hbKey, nowB)
+                  const displayName = (prev && prev.displayName) ? prev.displayName : `Alumno-${String(sid).slice(0,5)}`
+                  try { broadcast({ type: 'participant-heartbeat', classId: cid, sessionId: sid, displayName, lastSeen: new Date(), connected: true }, cid) } catch(e) { console.warn('broadcast participant-heartbeat failed', e) }
+                }
+              } catch(e) { console.warn('participant-heartbeat logic failed', e) }
             } catch (e) { console.warn('ping handling failed', e) }
             return
           }
           // ignore other messages for now
+          // allow explicit unsubscribe so clients can leave a class without closing the socket
+          if (obj && obj.type === 'unsubscribe' && obj.classId) {
+            const cid = obj.classId
+            const sessionId = obj.sessionId || null
+            try {
+              const set = classSubs.get(cid)
+              if (set) set.delete(ws)
+              const wsSet = wsToClasses.get(ws)
+              if (wsSet) {
+                wsSet.delete(cid)
+                if (wsSet.size === 0) wsToClasses.delete(ws)
+              }
+              if (sessionId) {
+                // mark participant disconnected
+                try { await participants.updateOne({ classId: cid, sessionId }, { $set: { lastSeen: new Date(), connected: false } }, { upsert: false }) } catch(e) { /* ignore */ }
+                try { broadcast({ type: 'participant-disconnected', classId: cid, sessionId }, cid) } catch(e) { /* ignore */ }
+                try {
+                  const docs = await fetchConnectedParticipants(cid)
+                  broadcast({ type: 'participants-updated', classId: cid, participants: docs }, cid)
+                } catch(e) { /* ignore */ }
+                try { participantLastPersist.delete(`${cid}:${sessionId}`) } catch(e) { /* ignore */ }
+                try { participantLastBroadcast.delete(`${cid}:${sessionId}`) } catch(e) { /* ignore */ }
+              }
+            } catch (e) { console.warn('unsubscribe handling failed', e) }
+            return
+          }
         } catch(e) { console.warn('invalid ws message', e) }
       })
       ws.on('close', async () => {
@@ -568,11 +625,12 @@ try {
                 try { broadcast({ type: 'participant-disconnected', classId: cid, sessionId: sid }, cid) } catch(e) { console.warn('broadcast participant-disconnected failed', e) }
                 // Also broadcast updated participants list
                 try {
-                    const docs = await participants.find({ classId: cid, connected: true }).toArray()
-                  broadcast({ type: 'participants-updated', classId: cid, participants: docs }, cid)
+                    const docs = await fetchConnectedParticipants(cid)
+                    broadcast({ type: 'participants-updated', classId: cid, participants: docs }, cid)
                 } catch(e) { console.warn('broadcast participants-updated failed on close', e) }
                   // remove from in-memory persist map to avoid growth
                   try { participantLastPersist.delete(`${cid}:${sid}`) } catch(e) { /* ignore */ }
+                  try { participantLastBroadcast.delete(`${cid}:${sid}`) } catch(e) { /* ignore */ }
               }
             } catch(e) { console.warn('close handler participant update failed', e) }
           }

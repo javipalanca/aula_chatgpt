@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { initRealtime, subscribeToClass, joinClass, submitAnswer, getSessionId } from '../lib/storage'
+import { initRealtime, subscribeToClass, unsubscribeFromClass, joinClass, submitAnswer, getSessionId } from '../lib/storage'
 import { startHeartbeat, stopHeartbeat, leaveClass } from '../lib/storage'
 import { Button, clsx } from '../components/ui'
 
@@ -64,6 +64,7 @@ export default function StudentView({ classCode, displayName, onBack }) {
     window.addEventListener('aula-realtime', onRealtime)
     // on unload or leaving this view, inform server we left and stop heartbeat
     const cleanup = async () => {
+      try { unsubscribeFromClass(classCode) } catch(e) { console.warn('unsubscribeFromClass failed', e) }
       try { await leaveClass(classCode) } catch(e) { console.warn('leaveClass on cleanup failed', e) }
       try { stopHeartbeat() } catch(e) { console.warn('stopHeartbeat on cleanup failed', e) }
       try { window.removeEventListener('aula-realtime', onRealtime) } catch(e) { console.warn('remove aula-realtime listener failed', e) }

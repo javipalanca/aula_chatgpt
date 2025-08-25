@@ -468,6 +468,14 @@ export async function createQuestion(code, { id = `q-${Date.now()}`, title = 'Pr
   return q
 }
 
+export function unsubscribeFromClass(classId) {
+  try {
+    if (!_ws) return false
+    const payload = JSON.stringify({ type: 'unsubscribe', classId, sessionId: getSessionId() })
+    try { _ws.send(payload); return true } catch(e) { console.warn('unsubscribeFromClass send failed', e); return false }
+  } catch (e) { console.warn('unsubscribeFromClass failed', e); return false }
+}
+
 export async function submitAnswer(classId, sessionId, questionId, answer) {
   if (!USE_API) throw new Error('submitAnswer requires VITE_STORAGE_API')
   const payload = { classId, sessionId, questionId, answer }

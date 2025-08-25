@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { FancyCard, Button, Input, clsx } from '../components/ui'
-import { createClass, listClasses, listClassParticipants, createQuestion, syncClassesRemote, setClassMeta, initRealtime, revealQuestion, subscribeToClass } from '../lib/storage'
+import { createClass, listClasses, listClassParticipants, createQuestion, syncClassesRemote, initRealtime, revealQuestion, subscribeToClass } from '../lib/storage'
 import { deleteClass, setClassActive } from '../lib/storage'
 import { VERIF_QUIZ, ETHICS_SCENARIOS } from '../lib/data'
 import { toast } from '../components/Toaster'
@@ -58,6 +58,22 @@ export default function TeacherDashboard({ onClose }) {
     return ()=> { /* cleanup handled globally by storage.js websocket */ }
   }, [selected])
 
+  // Poll participants periodically as a fallback / preference for teacher
+  useEffect(() => {
+    if (!selected) return
+    const POLL_MS = 5000 // poll every 5s
+    let mounted = true
+    const tick = async () => {
+      try {
+        if (!mounted) return
+        await fetchParticipants()
+      } catch (e) { console.warn('participants poll failed', e) }
+    }
+    // immediate tick already happens on selection, but ensure polling continues
+    const id = setInterval(tick, POLL_MS)
+    return () => { mounted = false; clearInterval(id) }
+  }, [selected])
+
   useEffect(()=>{
     function onRealtime(e) {
       const d = e.detail || {}
@@ -100,6 +116,29 @@ export default function TeacherDashboard({ onClose }) {
     setTimerRunning(false)
         // keep final distribution in liveAnswers
         setLiveAnswers(prev => ({ ...prev, [d.questionId]: { total: Object.values(d.distribution || {}).reduce((a,b)=>a+b,0), counts: d.distribution || {} } }))
+      }
+      // Lightweight heartbeat: update or upsert single participant entry to avoid full fetch
+      if (d.type === 'participant-heartbeat' && d.classId === selected) {
+        setParticipants(prev => {
+          const copy = (prev || []).slice()
+          const idx = copy.findIndex(p => p.sessionId === d.sessionId)
+          const entry = { sessionId: d.sessionId, displayName: d.displayName || (`Alumno-${String(d.sessionId).slice(0,5)}`), score: (copy[idx] && copy[idx].score) || 0, lastSeen: d.lastSeen || new Date(), connected: true }
+          if (idx === -1) copy.push(entry)
+          else copy[idx] = { ...copy[idx], ...entry }
+          return copy
+        })
+        setLastRefresh(new Date())
+      }
+      if (d.type === 'participant-disconnected' && d.classId === selected) {
+        setParticipants(prev => {
+          const copy = (prev || []).slice()
+          const idx = copy.findIndex(p => p.sessionId === d.sessionId)
+          if (idx !== -1) {
+            copy[idx] = { ...copy[idx], connected: false, lastSeen: new Date() }
+          }
+          return copy
+        })
+        setLastRefresh(new Date())
       }
     }
     window.addEventListener('aula-realtime', onRealtime)
