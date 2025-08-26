@@ -17,6 +17,85 @@ function csvEscape(v){ const s = String(v||''); if (s.includes(',') || s.include
 const app = express()
 app.use(cors())
 app.use(express.json())
+const OLLAMA_URL = process.env.VITE_OLLAMA_URL || ''
+const OLLAMA_MODEL = process.env.VITE_OLLAMA_MODEL || ''
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || ''
+const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-3.5-turbo'
+
+// Evaluate an open-text answer using an LLM. Prefer OpenAI (ChatGPT) when OPENAI_API_KEY
+// is available; otherwise fall back to Ollama if configured. The evaluator is instructed
+// to return strict JSON: { score: 0..1, feedback: '...' }.
+async function evaluateAnswerWithLLM(questionPayload = {}, answerText = '') {
+  const questionText = (questionPayload && (questionPayload.title || questionPayload.prompt || questionPayload.question)) ? (questionPayload.title || questionPayload.prompt || questionPayload.question) : ''
+  const system = `Eres un evaluador objetivo que puntúa respuestas de estudiantes. Devuelve únicamente JSON válido con dos campos: score (número entre 0 y 1) y feedback (cadena corta).`
+  const user = `Pregunta: ${String(questionText).slice(0,1000)}\n\nRespuesta del alumno: ${String(answerText).slice(0,2000)}\n\nEvalúa la respuesta: asigna un score entre 0 (muy mala) y 1 (excelente) según la calidad, claridad y cumplimiento de la consigna. Devuelve JSON: {"score": 0.0-1.0, "feedback": "..." }.`
+  // Try OpenAI Chat Completions first
+  if (OPENAI_API_KEY) {
+    try {
+      const url = 'https://api.openai.com/v1/chat/completions'
+      const body = { model: OPENAI_MODEL, messages: [ { role: 'system', content: system }, { role: 'user', content: user } ], temperature: 0.2, max_tokens: 200 }
+      const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${OPENAI_API_KEY}` }, body: JSON.stringify(body) })
+      const text = await r.text()
+      if (!r.ok) {
+        console.warn('OpenAI eval failed', r.status, text.slice(0,200))
+      } else {
+        // Try parse JSON from content
+        try {
+          const parsed = JSON.parse(text)
+          // OpenAI responses include choices[].message.content possibly with JSON inside
+          const content = (parsed.choices && parsed.choices[0] && parsed.choices[0].message && parsed.choices[0].message.content) ? parsed.choices[0].message.content : null
+          if (content) {
+            try { return JSON.parse(content) } catch (e) {
+              // content may have extra text; attempt to extract JSON substring
+              const s = content.indexOf('{')
+              const eidx = content.lastIndexOf('}')
+              if (s !== -1 && eidx !== -1 && eidx > s) {
+                try { return JSON.parse(content.substring(s, eidx+1)) } catch(err) { /* fallthrough */ }
+              }
+            }
+          }
+        } catch (e) {
+          // Some OpenAI wrappers return raw text; attempt to parse
+          try {
+            const content = text
+            const s = content.indexOf('{')
+            const eidx = content.lastIndexOf('}')
+            if (s !== -1 && eidx !== -1 && eidx > s) return JSON.parse(content.substring(s, eidx+1))
+          } catch (ee) { /* ignore */ }
+        }
+      }
+    } catch (e) { console.warn('OpenAI eval error', e) }
+  }
+
+  // Fallback to Ollama if configured
+  if (OLLAMA_URL) {
+    try {
+      const url = OLLAMA_URL.replace(/\/$/, '') + '/api/generate'
+      const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: OLLAMA_MODEL, prompt: `${system}\n\n${user}`, max_tokens: 200 }) })
+      const text = await r.text()
+      if (!r.ok) {
+        console.warn('Ollama eval failed', r.status, text.slice(0,200))
+      } else {
+        try {
+          const parsed = JSON.parse(text)
+          // Ollama responses may be raw JSON or contain results[0].content
+          if (Array.isArray(parsed)) return parsed[0]
+          if (parsed && Array.isArray(parsed.results) && parsed.results[0] && parsed.results[0].content) {
+            const content = parsed.results[0].content
+            try { return JSON.parse(content) } catch (e) {
+              const s = content.indexOf('{')
+              const eidx = content.lastIndexOf('}')
+              if (s !== -1 && eidx !== -1 && eidx > s) return JSON.parse(content.substring(s, eidx+1))
+            }
+          }
+        } catch (e) { console.warn('parse ollama eval response failed', e) }
+      }
+    } catch (e) { console.warn('Ollama eval error', e) }
+  }
+
+  // If no evaluator or parsing failed, return neutral
+  return { score: 0, feedback: 'Evaluador no disponible o no pudo parsear respuesta' }
+}
 
 try {
   const client = new MongoClient(MONGO_URI)
@@ -82,9 +161,6 @@ try {
       try { s.send(raw) } catch(e) { console.warn('ws send failed', e) }
     }
   }
-
-  const OLLAMA_URL = process.env.VITE_OLLAMA_URL || ''
-  const OLLAMA_MODEL = process.env.VITE_OLLAMA_MODEL || ''
 
   // (removed unused fetchWithTimeout helper)
 
@@ -288,34 +364,94 @@ try {
         distribution[key] = (distribution[key]||0) + 1
         if (String(a.answer) === String(correctAnswer)) correctSessions.push(a.sessionId)
       }
-      // Update scores for correct answers, decreasing proportionally to time taken
-      try {
+      // Update scores depending on question evaluation mode.
+  let evaluations = []
+  try {
         const active = activeQuestions.get(classId)
         const totalDurationSec = (active && active.question && Number(active.question.duration)) ? Number(active.question.duration) : 30
-        for (const a of docs) {
-          if (String(a.answer) === String(correctAnswer)) {
+        const payload = (active && active.question && active.question.payload) ? active.question.payload : {}
+  // Prefer explicit evaluation mode declared on the question payload.
+  // If missing, default to 'mcq' (safe fallback).
+  const evalMode = (payload && typeof payload.evaluation === 'string') ? payload.evaluation : 'mcq'
+
+        if (evalMode === 'mcq') {
+          // existing single-correct behavior with time decay
+          for (const a of docs) {
+            if (String(a.answer) === String(correctAnswer)) {
+              try {
+                const answerTs = a.created_at ? (new Date(a.created_at)).getTime() : Date.now()
+                const startedAt = (active && active.startedAt) ? active.startedAt : (answerTs - (totalDurationSec * 1000))
+                const timeTakenMs = Math.max(0, answerTs - startedAt)
+                const percent = Math.min(1, timeTakenMs / (totalDurationSec * 1000))
+                const award = Math.round((Number(points) || 0) * Math.max(0, 1 - percent))
+                if (award > 0) await participants.updateOne({ classId, sessionId: a.sessionId }, { $inc: { score: award }, $set: { lastSeen: new Date() } }, { upsert: true })
+              } catch(e) { console.error('score update failed', e) }
+            }
+          }
+        } else if (evalMode === 'redflags') {
+          // correctAnswer expected to be an array of expected flags
+          const expected = Array.isArray(correctAnswer) ? correctAnswer.map(String) : []
+          const expectedCount = expected.length || 1
+          for (const a of docs) {
             try {
+              // answers can be array or string; normalize
+              let ansArr = []
+              if (Array.isArray(a.answer)) ansArr = a.answer.map(String)
+              else if (typeof a.answer !== 'undefined' && a.answer !== null) ansArr = [String(a.answer)]
+              const matches = ansArr.filter(x => expected.includes(String(x))).length
+              const fraction = Math.max(0, Math.min(1, matches / expectedCount))
               const answerTs = a.created_at ? (new Date(a.created_at)).getTime() : Date.now()
               const startedAt = (active && active.startedAt) ? active.startedAt : (answerTs - (totalDurationSec * 1000))
               const timeTakenMs = Math.max(0, answerTs - startedAt)
               const percent = Math.min(1, timeTakenMs / (totalDurationSec * 1000))
-              const award = Math.round((Number(points) || 0) * Math.max(0, 1 - percent))
+              const award = Math.round((Number(points) || 0) * fraction * Math.max(0, 1 - percent))
               if (award > 0) await participants.updateOne({ classId, sessionId: a.sessionId }, { $inc: { score: award }, $set: { lastSeen: new Date() } }, { upsert: true })
-            } catch(e) { console.error('score update failed', e) }
+            } catch(e) { console.error('redflags score update failed', e) }
           }
+        } else if (evalMode === 'open' || evalMode === 'prompt') {
+          // Evaluate open/free-text answers using LLM evaluator and award points proportional to LLM score and remaining time
+          const evalPromises = docs.map(async (a) => {
+            try {
+              const answerText = Array.isArray(a.answer) ? a.answer.join(', ') : String(a.answer || '')
+              const evalRes = await evaluateAnswerWithLLM(payload, answerText)
+              const scoreFraction = typeof evalRes.score === 'number' ? Math.max(0, Math.min(1, evalRes.score)) : 0
+              const answerTs = a.created_at ? (new Date(a.created_at)).getTime() : Date.now()
+              const startedAt = (active && active.startedAt) ? active.startedAt : (answerTs - (totalDurationSec * 1000))
+              const timeTakenMs = Math.max(0, answerTs - startedAt)
+              const percent = Math.min(1, timeTakenMs / (totalDurationSec * 1000))
+              const awarded = Math.round((Number(points) || 0) * scoreFraction * Math.max(0, 1 - percent))
+              if (awarded > 0) {
+                await participants.updateOne({ classId, sessionId: a.sessionId }, { $inc: { score: awarded }, $set: { lastSeen: new Date() } }, { upsert: true })
+              }
+              return { sessionId: a.sessionId, score: scoreFraction, feedback: evalRes.feedback || '', awardedPoints: awarded }
+            } catch (e) { console.error('LLM evaluation failed for answer', e); return { sessionId: a.sessionId, score: 0, feedback: 'error', awardedPoints: 0 } }
+          })
+          evaluations = await Promise.all(evalPromises)
         }
       } catch(e) { console.error('score update batch failed', e) }
+      // Prepare answers array for open prompts if needed
+      const answersList = docs.map(a => ({ sessionId: a.sessionId, answer: a.answer, created_at: a.created_at }))
       // Fetch updated participants
-  const updated = await fetchConnectedParticipants(classId, { includeDisconnected: true })
-  // Broadcast results and participants update (only connected participants for teacher views)
-  try { broadcast({ type: 'question-results', classId, questionId, distribution, correctSessions, correctAnswer }, classId) } catch(e) { console.warn('broadcast question-results failed', e) }
-  try {
+      const updated = await fetchConnectedParticipants(classId, { includeDisconnected: true })
+      // Broadcast results and participants update (only connected participants for teacher views)
+      try {
+        const payload = { type: 'question-results', classId, questionId, distribution, correctSessions, correctAnswer }
+        // include answers for open/prompt evaluation
+        try {
+          const active = activeQuestions.get(classId)
+          const payloadMeta = (active && active.question && active.question.payload) ? active.question.payload : {}
+          const evalMode = (payloadMeta && typeof payloadMeta.evaluation === 'string') ? payloadMeta.evaluation : 'mcq'
+          if (evalMode === 'open' || evalMode === 'prompt') payload.answers = answersList
+        } catch (e) { /* ignore payload inspection errors */ }
+        broadcast(payload, classId)
+      } catch(e) { console.warn('broadcast question-results failed', e) }
+    try {
     const connected = await fetchConnectedParticipants(classId)
     broadcast({ type: 'participants-updated', classId, participants: connected }, classId)
   } catch(e) { console.warn('broadcast participants-updated failed', e) }
   // clear active question for this class so new subscribers won't receive it
   try { activeQuestions.delete(classId) } catch(e) { console.warn('activeQuestions delete failed', e) }
-      return res.json({ ok: true, distribution, correctSessions, participants: updated })
+      return res.json({ ok: true, distribution, correctSessions, participants: updated, evaluations })
     } catch (err) {
       console.error('reveal error', err)
       return res.status(500).json({ ok: false, error: String(err) })
@@ -649,27 +785,84 @@ try {
                 distribution[key] = (distribution[key]||0) + 1
                 if (String(a.answer) === String(correctAnswer)) correctSessions.push(a.sessionId)
               }
-              // Update scores for correct sessions with time-based decay
+              // Update scores for correct sessions with time-based decay or different eval modes
               try {
+                let evaluations = []
                 const active = activeQuestions.get(classId)
                 const totalDurationSec = (active && active.question && Number(active.question.duration)) ? Number(active.question.duration) : 30
-                for (const a of docs) {
-                  if (String(a.answer) === String(correctAnswer)) {
+                const payload = (active && active.question && active.question.payload) ? active.question.payload : {}
+                // Prefer explicit evaluation mode declared on the question payload; fallback to 'mcq'
+                const evalMode = (payload && typeof payload.evaluation === 'string') ? payload.evaluation : 'mcq'
+
+                if (evalMode === 'mcq') {
+                  for (const a of docs) {
+                    if (String(a.answer) === String(correctAnswer)) {
+                      try {
+                        const answerTs = a.created_at ? (new Date(a.created_at)).getTime() : Date.now()
+                        const startedAt = (active && active.startedAt) ? active.startedAt : (answerTs - (totalDurationSec * 1000))
+                        const timeTakenMs = Math.max(0, answerTs - startedAt)
+                        const percent = Math.min(1, timeTakenMs / (totalDurationSec * 1000))
+                        const award = Math.round((Number(points) || 0) * Math.max(0, 1 - percent))
+                        if (award > 0) await participants.updateOne({ classId, sessionId: a.sessionId }, { $inc: { score: award }, $set: { lastSeen: new Date() } }, { upsert: true })
+                      } catch(e) { console.error('score update failed in ws reveal', e) }
+                    }
+                  }
+                } else if (evalMode === 'redflags') {
+                  const expected = Array.isArray(correctAnswer) ? correctAnswer.map(String) : []
+                  const expectedCount = expected.length || 1
+                  for (const a of docs) {
                     try {
+                      let ansArr = []
+                      if (Array.isArray(a.answer)) ansArr = a.answer.map(String)
+                      else if (typeof a.answer !== 'undefined' && a.answer !== null) ansArr = [String(a.answer)]
+                      const matches = ansArr.filter(x => expected.includes(String(x))).length
+                      const fraction = Math.max(0, Math.min(1, matches / expectedCount))
                       const answerTs = a.created_at ? (new Date(a.created_at)).getTime() : Date.now()
                       const startedAt = (active && active.startedAt) ? active.startedAt : (answerTs - (totalDurationSec * 1000))
                       const timeTakenMs = Math.max(0, answerTs - startedAt)
                       const percent = Math.min(1, timeTakenMs / (totalDurationSec * 1000))
-                      const award = Math.round((Number(points) || 0) * Math.max(0, 1 - percent))
+                      const award = Math.round((Number(points) || 0) * fraction * Math.max(0, 1 - percent))
                       if (award > 0) await participants.updateOne({ classId, sessionId: a.sessionId }, { $inc: { score: award }, $set: { lastSeen: new Date() } }, { upsert: true })
-                    } catch(e) { console.error('score update failed in ws reveal', e) }
+                    } catch(e) { console.error('redflags score update failed in ws reveal', e) }
                   }
+                } else if (evalMode === 'open' || evalMode === 'prompt') {
+                  // Evaluate open answers automatically via LLM and award points based on evaluator score
+                  try {
+                    const evals = []
+                    for (const a of docs) {
+                      try {
+                        const answerText = Array.isArray(a.answer) ? a.answer.join(', ') : String(a.answer || '')
+                        const evalRes = await evaluateAnswerWithLLM(payload, answerText)
+                        const scoreFraction = typeof evalRes.score === 'number' ? Math.max(0, Math.min(1, evalRes.score)) : 0
+                        const answerTs = a.created_at ? (new Date(a.created_at)).getTime() : Date.now()
+                        const startedAt = (active && active.startedAt) ? active.startedAt : (answerTs - (totalDurationSec * 1000))
+                        const timeTakenMs = Math.max(0, answerTs - startedAt)
+                        const percent = Math.min(1, timeTakenMs / (totalDurationSec * 1000))
+                        const awarded = Math.round((Number(points) || 0) * scoreFraction * Math.max(0, 1 - percent))
+                        if (awarded > 0) await participants.updateOne({ classId, sessionId: a.sessionId }, { $inc: { score: awarded }, $set: { lastSeen: new Date() } }, { upsert: true })
+                        evals.push({ sessionId: a.sessionId, score: scoreFraction, feedback: evalRes.feedback || '', awardedPoints: awarded })
+                      } catch (e) { console.error('LLM eval failed (ws) for', a.sessionId, e); evals.push({ sessionId: a.sessionId, score: 0, feedback: 'error', awardedPoints: 0 }) }
+                    }
+                    // attach evaluations to broadcast payload
+                    if (!Array.isArray(evaluations)) evaluations = []
+                    evaluations = evaluations.concat(evals)
+                  } catch(e) { console.error('ws open eval batch failed', e) }
                 }
               } catch(e) { console.error('ws score update batch failed', e) }
               // Fetch updated participants (include disconnected for response) — we return it in HTTP reveal, keep here for parity
               await fetchConnectedParticipants(classId, { includeDisconnected: true })
               // Broadcast results and participants update
-              try { broadcast({ type: 'question-results', classId, questionId, distribution, correctSessions, correctAnswer }, classId) } catch(e) { console.warn('broadcast question-results failed (ws reveal)', e) }
+              try {
+                const answersListWs = docs.map(a => ({ sessionId: a.sessionId, answer: a.answer, created_at: a.created_at }))
+                const payload = { type: 'question-results', classId, questionId, distribution, correctSessions, correctAnswer }
+                try {
+                  const active = activeQuestions.get(classId)
+                  const payloadMeta = (active && active.question && active.question.payload) ? active.question.payload : {}
+                  const evalMode = (payloadMeta && typeof payloadMeta.evaluation === 'string') ? payloadMeta.evaluation : 'mcq'
+                  if (evalMode === 'open' || evalMode === 'prompt') payload.answers = answersListWs
+                } catch (e) { /* ignore */ }
+                broadcast(payload, classId)
+              } catch(e) { console.warn('broadcast question-results failed (ws reveal)', e) }
               try {
                 const connected = await fetchConnectedParticipants(classId)
                 broadcast({ type: 'participants-updated', classId, participants: connected }, classId)

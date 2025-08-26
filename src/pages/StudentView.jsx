@@ -124,7 +124,7 @@ export default function StudentView({ classCode, displayName, onBack }) {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-black text-white p-6">
+  <div className="min-h-screen flex items-center justify-center bg-black text-white p-6">
       <div className="max-w-4xl w-full text-center">
         <div className="mb-6">
           <div className="text-sm opacity-60">Clase: <span className="font-mono">{classCode}</span></div>
@@ -145,6 +145,12 @@ export default function StudentView({ classCode, displayName, onBack }) {
 
         {currentQuestion && (
           <div className="p-8 rounded-xl bg-white/5">
+            {currentQuestion.payload && currentQuestion.payload.blockName && (
+              <div className="mb-4">
+                <div className="text-sm opacity-70">Bloque actual: <span className="font-semibold">{currentQuestion.payload.blockName}</span></div>
+                <div className="text-xs opacity-60">Pregunta {typeof currentQuestion.payload.questionIndex !== 'undefined' ? (currentQuestion.payload.questionIndex+1) : '?'} del bloque</div>
+              </div>
+            )}
             <div className="text-3xl font-bold mb-4">{currentQuestion.title}</div>
             {currentQuestion.options && currentQuestion.options.length>0 && (
               <div className="grid gap-3 mb-6">

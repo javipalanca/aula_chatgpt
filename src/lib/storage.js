@@ -259,6 +259,32 @@ export async function setClassMeta(code, meta) {
   }
 }
 
+// Persist class meta and update local cache immediately to avoid UI inconsistencies.
+// This helper performs the PATCH, updates MEM.classes locally with the new meta,
+// dispatches the 'aula-classes-updated' event so UI listeners refresh, and then
+// triggers a remote sync to reconcile state.
+export async function persistClassMeta(code, meta) {
+  if (!USE_API) throw new Error('persistClassMeta requires VITE_STORAGE_API')
+  try {
+    const url = `${API_BASE}/api/classes/${encodeURIComponent(code)}`
+    const r = await fetch(url, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ meta }) })
+    if (!r.ok) {
+      const body = await r.text().catch(()=>null)
+      throw new Error(`Failed to persist class meta: ${r.status} ${r.statusText} ${body || ''}`)
+    }
+    // Update local cache optimistically so UI reacts immediately
+    MEM.classes = MEM.classes || {}
+    MEM.classes[code] = { ...(MEM.classes[code] || {}), id: code, code, meta, participants: MEM.classes[code] ? MEM.classes[code].participants : {}, challenges: MEM.classes[code] ? MEM.classes[code].challenges : [], name: MEM.classes[code] ? MEM.classes[code].name : undefined, teacherName: MEM.classes[code] ? MEM.classes[code].teacherName : undefined, active: MEM.classes[code] ? MEM.classes[code].active : true }
+    try { window.dispatchEvent(new CustomEvent('aula-classes-updated', { detail: MEM.classes })) } catch(e) { console.warn('dispatch aula-classes-updated failed', e) }
+    // Trigger remote sync to reconcile other clients (don't fail the flow if sync fails)
+    try { await syncClassesRemote() } catch(e) { console.warn('syncClassesRemote failed after persistClassMeta', e) }
+    return MEM.classes[code]
+  } catch (e) {
+    console.warn('persistClassMeta failed', e)
+    throw e
+  }
+}
+
 export async function joinClass(code, displayName, password = null) {
   if (!USE_API) throw new Error('joinClass requires VITE_STORAGE_API')
   const sid = getSessionId()
@@ -429,10 +455,17 @@ export function initRealtime(baseUrl) {
       try {
         // ensure websocket exists
         if (!_ws) initRealtime()
-      const payload = JSON.stringify({ type: 'subscribe', classId, sessionId: getSessionId(), role })
+    const payloadObj = { type: 'subscribe', classId, sessionId: getSessionId(), role }
+  try { console.log('subscribeToClass: preparing subscribe payload', payloadObj) } catch(e) { console.warn('subscribeToClass log failed', e) }
+    const payload = JSON.stringify(payloadObj)
         // if open, send immediately
         if (_ws && _ws.readyState === WebSocket.OPEN) {
-          try { _ws.send(payload) } catch(e) { console.warn('subscribeToClass send immediate failed', e) }
+          try {
+            _ws.send(payload)
+                console.log('subscribeToClass: sent subscribe immediately', payloadObj)
+          } catch (e) {
+            console.warn('subscribeToClass send immediate failed', e)
+          }
           return true
         }
         // otherwise attempt to send when socket opens, with periodic retries for up to 10s
@@ -440,15 +473,20 @@ export function initRealtime(baseUrl) {
         const maxAttempts = 20 // 20 * 500ms = 10s
         const sendIfOpen = () => {
           attempts += 1
-          try {
-            if (_ws && _ws.readyState === WebSocket.OPEN) {
-              _ws.send(payload)
-              clearInterval(interval)
-              try { _ws.removeEventListener('open', onOpen) } catch(e) { console.warn('removeEventListener failed', e) }
+            try {
+              if (_ws && _ws.readyState === WebSocket.OPEN) {
+                try {
+                  _ws.send(payload)
+                  console.log('subscribeToClass: sent subscribe on retry', payloadObj)
+                } catch (e) {
+                  console.warn('subscribeToClass send failed in retry', e)
+                }
+                clearInterval(interval)
+                try { _ws.removeEventListener('open', onOpen) } catch(e) { console.warn('removeEventListener failed', e) }
+              }
+            } catch (e) {
+              console.warn('subscribeToClass periodic send failed', e)
             }
-          } catch (e) {
-            console.warn('subscribeToClass periodic send failed', e)
-          }
           if (attempts >= maxAttempts) {
             clearInterval(interval)
             try { _ws && _ws.removeEventListener('open', onOpen) } catch(e) { console.warn('removeEventListener failed at maxAttempts', e) }
@@ -467,7 +505,10 @@ export async function createQuestion(code, { id = `q-${Date.now()}`, title = 'Pr
   if (!USE_API) throw new Error('createQuestion requires VITE_STORAGE_API')
   const q = { id, title, options, duration, payload, created_at: Date.now(), classId: code }
   const r = await fetch(`${API_BASE}/api/challenges`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(q) })
-  if (!r.ok) throw new Error('createQuestion failed')
+  if (!r.ok) {
+    const txt = await r.text().catch(()=>null)
+    throw new Error('createQuestion failed: ' + (txt || (r.status + ' ' + r.statusText)))
+  }
   return q
 }
 
