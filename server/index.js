@@ -288,12 +288,23 @@ try {
         distribution[key] = (distribution[key]||0) + 1
         if (String(a.answer) === String(correctAnswer)) correctSessions.push(a.sessionId)
       }
-      // Update scores for correct sessions
-      for (const sid of correctSessions) {
-        try {
-          await participants.updateOne({ classId, sessionId: sid }, { $inc: { score: Number(points) || 0 }, $set: { lastSeen: new Date() } }, { upsert: true })
-        } catch(e) { console.error('score update failed', e) }
-      }
+      // Update scores for correct answers, decreasing proportionally to time taken
+      try {
+        const active = activeQuestions.get(classId)
+        const totalDurationSec = (active && active.question && Number(active.question.duration)) ? Number(active.question.duration) : 30
+        for (const a of docs) {
+          if (String(a.answer) === String(correctAnswer)) {
+            try {
+              const answerTs = a.created_at ? (new Date(a.created_at)).getTime() : Date.now()
+              const startedAt = (active && active.startedAt) ? active.startedAt : (answerTs - (totalDurationSec * 1000))
+              const timeTakenMs = Math.max(0, answerTs - startedAt)
+              const percent = Math.min(1, timeTakenMs / (totalDurationSec * 1000))
+              const award = Math.round((Number(points) || 0) * Math.max(0, 1 - percent))
+              if (award > 0) await participants.updateOne({ classId, sessionId: a.sessionId }, { $inc: { score: award }, $set: { lastSeen: new Date() } }, { upsert: true })
+            } catch(e) { console.error('score update failed', e) }
+          }
+        }
+      } catch(e) { console.error('score update batch failed', e) }
       // Fetch updated participants
   const updated = await fetchConnectedParticipants(classId, { includeDisconnected: true })
   // Broadcast results and participants update (only connected participants for teacher views)
@@ -638,12 +649,23 @@ try {
                 distribution[key] = (distribution[key]||0) + 1
                 if (String(a.answer) === String(correctAnswer)) correctSessions.push(a.sessionId)
               }
-              // Update scores for correct sessions
-              for (const sid of correctSessions) {
-                try {
-                  await participants.updateOne({ classId, sessionId: sid }, { $inc: { score: Number(points) || 0 }, $set: { lastSeen: new Date() } }, { upsert: true })
-                } catch(e) { console.error('score update failed in ws reveal', e) }
-              }
+              // Update scores for correct sessions with time-based decay
+              try {
+                const active = activeQuestions.get(classId)
+                const totalDurationSec = (active && active.question && Number(active.question.duration)) ? Number(active.question.duration) : 30
+                for (const a of docs) {
+                  if (String(a.answer) === String(correctAnswer)) {
+                    try {
+                      const answerTs = a.created_at ? (new Date(a.created_at)).getTime() : Date.now()
+                      const startedAt = (active && active.startedAt) ? active.startedAt : (answerTs - (totalDurationSec * 1000))
+                      const timeTakenMs = Math.max(0, answerTs - startedAt)
+                      const percent = Math.min(1, timeTakenMs / (totalDurationSec * 1000))
+                      const award = Math.round((Number(points) || 0) * Math.max(0, 1 - percent))
+                      if (award > 0) await participants.updateOne({ classId, sessionId: a.sessionId }, { $inc: { score: award }, $set: { lastSeen: new Date() } }, { upsert: true })
+                    } catch(e) { console.error('score update failed in ws reveal', e) }
+                  }
+                }
+              } catch(e) { console.error('ws score update batch failed', e) }
               // Fetch updated participants (include disconnected for response) — we return it in HTTP reveal, keep here for parity
               await fetchConnectedParticipants(classId, { includeDisconnected: true })
               // Broadcast results and participants update

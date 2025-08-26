@@ -9,8 +9,8 @@ import { Chart as ChartJS, BarElement, CategoryScale, LinearScale, Tooltip, Lege
 ChartJS.register(BarElement, CategoryScale, LinearScale, Tooltip, Legend)
 
 export default function TeacherDashboard({ onClose }) {
-  const [name, setName] = useState('Mi clase')
   const [teacherName, setTeacherName] = useState('Profesor/a')
+  const [name, setName] = useState('Mi clase')
   const [password] = useState('')
   const [classes, setClasses] = useState([])
   const [creating, setCreating] = useState(false)
@@ -20,6 +20,8 @@ export default function TeacherDashboard({ onClose }) {
   const [showProfessorFull, setShowProfessorFull] = useState(false)
   const [lastQuestionResults, setLastQuestionResults] = useState(null)
   const [showScoresOverlay, setShowScoresOverlay] = useState(false)
+  // ranking chart visibility handled via lastQuestionResults / showScoresOverlay
+  const [showParticipantsList, setShowParticipantsList] = useState(true)
   const [secondsLeft, setSecondsLeft] = useState(0)
   const [timerRunning, setTimerRunning] = useState(false)
   const [selectedCorrect, setSelectedCorrect] = useState(null)
@@ -75,6 +77,13 @@ export default function TeacherDashboard({ onClose }) {
   }, [selected])
 
   useEffect(()=>{
+    // when results arrive, show the ranking chart overlay automatically
+    if (lastQuestionResults) {
+  setShowScoresOverlay(true)
+    }
+  }, [lastQuestionResults])
+
+  useEffect(()=>{
     function onRealtime(e) {
       const d = e.detail || {}
       if (!d) return
@@ -83,7 +92,7 @@ export default function TeacherDashboard({ onClose }) {
         setParticipants(d.participants.map(p => ({ sessionId: p.sessionId, displayName: p.displayName, score: p.score, lastSeen: p.lastSeen })))
         setLastRefresh(new Date())
       }
-      if (d.type === 'question-launched' && d.classId === selected) {
+  if (d.type === 'question-launched' && d.classId === selected) {
         setQuestionRunning(d.question)
         // start timer for professor view
     setSecondsLeft(d.question.duration || 30)
@@ -317,6 +326,30 @@ export default function TeacherDashboard({ onClose }) {
     URL.revokeObjectURL(url)
   }
 
+  // Ranking chart data + options (colorful + animated)
+  const sortedParticipants = (participants || []).slice().sort((a,b)=> (b.score||0)-(a.score||0))
+  const top10 = sortedParticipants.slice(0,10)
+  const rankingLabels = top10.map(p => p.displayName)
+  const rankingValues = top10.map(p => p.score || 0)
+  const palette = ['#EF4444','#F59E0B','#10B981','#3B82F6','#8B5CF6','#EC4899','#06B6D4','#F97316','#6366F1','#14B8A6']
+  const rankingColors = top10.map((_, i) => i === 0 ? '#FFD700' : i === 1 ? '#C0C0C0' : i === 2 ? '#CD7F32' : palette[i % palette.length])
+  const rankingData = { labels: rankingLabels, datasets: [{ label: 'Puntos', data: rankingValues, backgroundColor: rankingColors, borderRadius: 8, barPercentage: 0.72 }] }
+  const rankingOptions = {
+    maintainAspectRatio: false,
+    responsive: true,
+    animation: { duration: 900, easing: 'easeOutQuart' },
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        callbacks: { label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y}` }
+      }
+    },
+    scales: {
+      x: { grid: { display: false }, ticks: { maxRotation: 40, minRotation: 0 } },
+      y: { beginAtZero: true, ticks: { stepSize: 1 } }
+    }
+  }
+
   return (
     <div className="p-4">
       <div className="mb-4 flex items-center gap-2">
@@ -393,20 +426,29 @@ export default function TeacherDashboard({ onClose }) {
                   </div>
                 )}
               </div>
-              <div className="w-full md:w-96 mt-6 md:mt-0">
-                <div className="mb-4">
-                  <h4 className="font-semibold">Participantes</h4>
+              {/* Participants column: collapsible to prioritize question area */}
+              {showParticipantsList ? (
+                <div className="w-full md:w-72 mt-6 md:mt-0">
+                  <div className="mb-4 flex items-center justify-between">
+                    <h4 className="font-semibold">Participantes</h4>
+                    <button className="text-sm text-slate-600" onClick={() => setShowParticipantsList(false)}>Ocultar</button>
+                  </div>
+                  <div className="mb-4">
                     <div className="mt-3 space-y-2 max-h-72 overflow-auto">
-                    {participants.slice().sort((a,b)=> (b.score||0)-(a.score||0)).map(p => (
-                      <div key={p.sessionId} className={clsx('p-2 rounded border flex items-center justify-between', p.connected === false ? 'bg-red-50 opacity-60' : 'bg-white/5')}>
-                        <div className="font-semibold">{p.displayName}{p.connected === false && (<span className="ml-2 text-xs text-red-600">(desconectado)</span>)}</div>
-                        <div className="font-bold">{p.score||0}</div>
-                      </div>
-                    ))}
+                      {participants.slice().sort((a,b)=> (b.score||0)-(a.score||0)).map(p => (
+                        <div key={p.sessionId} className={clsx('p-2 rounded border flex items-center justify-between', p.connected === false ? 'bg-red-50 opacity-60' : 'bg-white/5')}>
+                          <div className="font-semibold">{p.displayName}{p.connected === false && (<span className="ml-2 text-xs text-red-600">(desconectado)</span>)}</div>
+                          <div className="font-bold">{p.score||0}</div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
-                
-              </div>
+              ) : (
+                <div className="w-full md:w-14 mt-6 md:mt-0 flex items-start justify-end">
+                  <button className="text-sm text-slate-600" onClick={() => setShowParticipantsList(true)}>Mostrar participantes</button>
+                </div>
+              )}
             </div>
           </FancyCard>
         </div>
@@ -463,12 +505,20 @@ export default function TeacherDashboard({ onClose }) {
                 )}
                 <div className="mt-4">
                   <h4 className="font-semibold">Ranking (gráfica)</h4>
-                  <div className="mt-3">
+                  <div className="mt-3" style={{ height: 260 }}>
                     {participants.length===0 ? <p className="text-sm text-slate-600">Sin participantes</p> : (
-                      <Bar options={{ responsive: true, plugins: { legend: { display: false } } }} data={{
-                        labels: participants.slice().sort((a,b)=> (b.score||0)-(a.score||0)).slice(0,10).map(p => p.displayName),
-                        datasets: [{ label: 'Puntos', backgroundColor: 'rgba(37,99,235,0.9)', data: participants.slice().sort((a,b)=> (b.score||0)-(a.score||0)).slice(0,10).map(p => p.score || 0) }]
-                      }} />
+                      <div className="h-full">
+                        <Bar options={rankingOptions} data={rankingData} />
+                        <div className="mt-4 flex items-center justify-center gap-4">
+                          {sortedParticipants.slice(0,3).map((p,i) => (
+                            <div key={p.sessionId || i} className={"flex flex-col items-center p-2 rounded-lg shadow-md transform transition-all " + (i===0 ? 'scale-105 animate-bounce' : 'opacity-95') }>
+                              <div className="text-3xl">{i===0 ? '🥇' : i===1 ? '🥈' : '🥉'}</div>
+                              <div className="font-semibold mt-1 text-sm truncate" style={{maxWidth:120}}>{p.displayName}</div>
+                              <div className="text-xs opacity-70">{p.score || 0} pts</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
                     )}
                   </div>
                 </div>
@@ -546,18 +596,36 @@ export default function TeacherDashboard({ onClose }) {
       {showScoresOverlay && (
         <div className="fixed inset-0 z-80 flex items-center justify-center">
           <div className="absolute inset-0 bg-black/70" onClick={() => setShowScoresOverlay(false)} />
-          <div className="relative z-10 bg-white rounded-xl p-6 max-w-2xl w-full">
-            <h3 className="text-xl font-bold mb-3">Puntuaciones acumuladas</h3>
-            <div className="space-y-2 max-h-96 overflow-auto">
-              {participants.slice().sort((a,b)=> (b.score||0)-(a.score||0)).map(p=> (
-                <div key={p.sessionId} className="flex justify-between items-center p-2 border rounded">
-                  <div className="font-semibold">{p.displayName}</div>
-                  <div className="font-bold">{p.score||0}</div>
+              <div className="relative z-10 bg-white rounded-xl p-6 max-w-2xl w-full">
+                <h3 className="text-xl font-bold mb-3">Puntuaciones acumuladas</h3>
+                <div className="w-full">
+                  <div className="mb-4 w-full overflow-x-auto">
+                    <div className="flex gap-3 items-stretch" style={{ minWidth: 420, whiteSpace: 'nowrap' }}>
+                      {sortedParticipants.slice(0,3).map((p,i) => (
+                        <div key={p.sessionId || i} className="text-center p-3 rounded-lg shadow-lg inline-block" style={{ background: i===0 ? 'linear-gradient(135deg,#FFD54A,#FFD700)' : i===1 ? 'linear-gradient(135deg,#E0E0E0,#C0C0C0)' : 'linear-gradient(135deg,#D4A373,#CD7F32)', width: 220, minWidth: 120 }}>
+                          <div className="text-4xl">{i===0 ? '👑' : i===1 ? '🥈' : '🥉'}</div>
+                          <div className="font-bold mt-2 text-lg truncate">{p.displayName}</div>
+                          <div className="text-sm opacity-80">{p.score || 0} pts</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div style={{ height: 260 }}>
+                    {participants.length===0 ? <p className="text-sm text-slate-600">Sin participantes</p> : (
+                      <Bar options={rankingOptions} data={rankingData} />
+                    )}
+                  </div>
+                  <div className="mt-4 space-y-2 max-h-40 overflow-auto">
+                    {participants.slice().sort((a,b)=> (b.score||0)-(a.score||0)).map(p=> (
+                      <div key={p.sessionId} className="flex justify-between items-center p-2 border rounded">
+                        <div className="font-semibold">{p.displayName}</div>
+                        <div className="font-bold">{p.score||0}</div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              ))}
-            </div>
-            <div className="mt-4 flex justify-end"><Button onClick={()=> setShowScoresOverlay(false)} variant="ghost">Cerrar</Button></div>
-          </div>
+                <div className="mt-4 flex justify-end"><Button onClick={()=> setShowScoresOverlay(false)} variant="ghost">Cerrar</Button></div>
+              </div>
         </div>
       )}
     </div>
