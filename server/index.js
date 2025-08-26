@@ -72,6 +72,12 @@ try {
     } else {
       targets = Array.from(wsClients)
     }
+    // Log only for key events (questions/results) to help debugging reachability
+    try {
+      if (data && (data.type === 'question-results' || data.type === 'question-launched')) {
+        console.log('Broadcasting', data.type, 'for class', targetClassId, 'to', targets.length, 'sockets')
+      }
+    } catch (e) { /* ignore logging errors */ }
     for (const s of targets) {
       try { s.send(raw) } catch(e) { console.warn('ws send failed', e) }
     }
@@ -488,9 +494,13 @@ try {
       wsClients.add(ws)
       ws.on('close', () => wsClients.delete(ws))
     ws.on('message', async (msg) => {
+        // debug: log raw incoming message and ws metadata
+        try { console.debug('WS recv raw', { raw: String(msg).slice(0,200), sessionId: ws._sessionId || null, role: ws._role || null }) } catch(e) { /* ignore */ }
         // allow clients to send pings or subscribe messages if needed
         try {
+          try { console.debug('WS recv parsed preview', String(msg).slice(0,1000)) } catch(e) { /* ignore */ }
           const obj = JSON.parse(String(msg))
+          try { console.debug('WS recv obj', { type: obj && obj.type, classId: obj && obj.classId, sessionId: obj && obj.sessionId }) } catch(e) { /* ignore */ }
       if (obj && obj.type === 'subscribe' && obj.classId) {
             const cid = obj.classId
             // If client provided a sessionId, associate it with this ws so we can detect disconnects
@@ -506,6 +516,8 @@ try {
             wsToClasses.get(ws).add(cid)
             // record sessionId on the ws object for later disconnect tracking
             try { if (sessionId) ws._sessionId = sessionId } catch(e) { console.warn('assign sessionId to ws failed', e) }
+            // record role for permission checks
+            try { ws._role = role } catch(e) { /* ignore */ }
             // If subscriber is a student: mark participant as connected in DB and broadcast updated participants
             try {
               if (sessionId && role === 'student') {
@@ -604,6 +616,45 @@ try {
               }
             } catch (e) { console.warn('unsubscribe handling failed', e) }
             return
+          }
+          // allow teacher to trigger reveal via websocket (so students get immediate order)
+          if (obj && obj.type === 'reveal' && obj.classId && obj.questionId && typeof obj.correctAnswer !== 'undefined') {
+            try {
+              // only allow ws with role teacher to reveal
+              if (ws._role !== 'teacher') {
+                try { ws.send(JSON.stringify({ type: 'error', message: 'forbidden' })) } catch(e) { /* ignore */ }
+                return
+              }
+              const classId = obj.classId
+              const questionId = obj.questionId
+              const correctAnswer = obj.correctAnswer
+              const points = obj.points || 100
+              // compute distribution
+              const docs = await answers.find({ classId, questionId }).toArray()
+              const distribution = {}
+              const correctSessions = []
+              for (const a of docs) {
+                const key = a.answer == null ? '': String(a.answer)
+                distribution[key] = (distribution[key]||0) + 1
+                if (String(a.answer) === String(correctAnswer)) correctSessions.push(a.sessionId)
+              }
+              // Update scores for correct sessions
+              for (const sid of correctSessions) {
+                try {
+                  await participants.updateOne({ classId, sessionId: sid }, { $inc: { score: Number(points) || 0 }, $set: { lastSeen: new Date() } }, { upsert: true })
+                } catch(e) { console.error('score update failed in ws reveal', e) }
+              }
+              // Fetch updated participants (include disconnected for response) — we return it in HTTP reveal, keep here for parity
+              await fetchConnectedParticipants(classId, { includeDisconnected: true })
+              // Broadcast results and participants update
+              try { broadcast({ type: 'question-results', classId, questionId, distribution, correctSessions, correctAnswer }, classId) } catch(e) { console.warn('broadcast question-results failed (ws reveal)', e) }
+              try {
+                const connected = await fetchConnectedParticipants(classId)
+                broadcast({ type: 'participants-updated', classId, participants: connected }, classId)
+              } catch(e) { console.warn('broadcast participants-updated failed (ws reveal)', e) }
+              try { activeQuestions.delete(classId) } catch(e) { console.warn('activeQuestions delete failed (ws reveal)', e) }
+              return
+            } catch (e) { console.warn('ws reveal handling failed', e); return }
           }
         } catch(e) { console.warn('invalid ws message', e) }
       })

@@ -33,7 +33,7 @@ export default function StudentView({ classCode, displayName, onBack }) {
 
     function onRealtime(e) {
       const d = e.detail || {}
-  try { console.debug('StudentView received realtime', d) } catch(e) { console.warn('StudentView debug log failed', e) }
+  try { console.log('StudentView received realtime', d) } catch(e) { console.warn('StudentView log failed', e) }
       if (d.classId !== classCode) return
       if (d.type === 'question-launched') {
         setCurrentQuestion(d.question)
@@ -47,17 +47,23 @@ export default function StudentView({ classCode, displayName, onBack }) {
       if (d.type === 'answers-count' && d.questionId === (currentQuestion && currentQuestion.id)) {
         setAnswersCount(d.total || 0)
       }
-      if (d.type === 'question-results' && d.questionId === (currentQuestion && currentQuestion.id)) {
-  // stop local timer and show results
-  setSecondsLeft(0)
-  setHasAnswered(true)
-  // distribution and correctAnswer come from server; update correctAnswer
-  setCorrectAnswer(d.correctAnswer)
-        // optionally show awarded points in payload
-        if (d.updatedScores) {
-          const me = d.updatedScores.find(s => s.sessionId === getSessionId())
-          if (me) setScore(me.score || 0)
-        }
+      if (d.type === 'question-results') {
+  // Log for debugging
+  try { console.debug('StudentView question-results received', { questionId: d.questionId, currentQuestionId: currentQuestion && currentQuestion.id }) } catch(e) { /* ignore */ }
+  // If it's for the current question, or if for any reason questionId doesn't match but class-level reveal arrived,
+  // stop the timer and show results as a safe fallback.
+  if (!currentQuestion || d.questionId === (currentQuestion && currentQuestion.id) || d.classId === classCode) {
+    // stop local timer and show results
+    setSecondsLeft(0)
+    setHasAnswered(true)
+    // distribution and correctAnswer come from server; update correctAnswer
+    setCorrectAnswer(d.correctAnswer)
+    // optionally show awarded points in payload
+    if (d.updatedScores) {
+      const me = d.updatedScores.find(s => s.sessionId === getSessionId())
+      if (me) setScore(me.score || 0)
+    }
+  }
       }
     }
 

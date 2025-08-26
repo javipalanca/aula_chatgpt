@@ -402,20 +402,23 @@ export function initRealtime(baseUrl) {
         }
       }
     if (!_ws) return
-  _ws.addEventListener('open', () => { attempts = 0 })
+    _ws.addEventListener('open', () => { attempts = 0; try { console.log('initRealtime: ws open', { url: wsUrl }) } catch(e){ console.warn('initRealtime open log failed', e) } })
     _ws.addEventListener('message', (m) => {
+  try { console.log('initRealtime: ws raw recv', { raw: String(m.data).slice(0,200) }) } catch(e) { console.warn('initRealtime raw recv log failed', e) }
       try {
         const data = JSON.parse(m.data)
-          window.dispatchEvent(new CustomEvent('aula-realtime', { detail: data }))
-        } catch (e) { console.warn('initRealtime: failed to parse message', e) }
+  try { console.log('initRealtime: ws parsed recv', { type: data && data.type, classId: data && data.classId }) } catch(e) { console.warn('initRealtime parsed recv log failed', e) }
+        window.dispatchEvent(new CustomEvent('aula-realtime', { detail: data }))
+      } catch (e) { console.warn('initRealtime: failed to parse message', e) }
     })
-    _ws.addEventListener('close', () => {
+    _ws.addEventListener('close', (ev) => {
+  try { console.log('initRealtime: ws close', ev) } catch(e){ console.warn('initRealtime close log failed', e) }
       _ws = null
       // reconnect with backoff
       const backoff = Math.min(30000, 500 + Math.random()*1000 * attempts)
       setTimeout(connect, backoff)
     })
-      _ws.addEventListener('error', (ev) => { console.warn('initRealtime websocket error', ev) })
+  _ws.addEventListener('error', (ev) => { try { console.log('initRealtime: ws error', ev) } catch(e){ console.warn('initRealtime error log failed', e) } console.warn('initRealtime websocket error', ev) })
   }
   try { connect() } catch (e) { console.warn('initRealtime initial connect failed', e) }
   return _ws
@@ -486,11 +489,80 @@ export async function submitAnswer(classId, sessionId, questionId, answer) {
 
 export async function revealQuestion(classId, questionId, correctAnswer, points = 100) {
   if (!USE_API) throw new Error('revealQuestion requires VITE_STORAGE_API')
+  // Prefer to send reveal via WebSocket so students receive immediate instruction
+  try {
+    if (typeof _ws !== 'undefined' && _ws && _ws.readyState === WebSocket.OPEN) {
+      try {
+        _ws.send(JSON.stringify({ type: 'reveal', classId, questionId, correctAnswer, points }))
+        // Wait briefly for the server to broadcast the question-results event. If it arrives,
+        // resolve with the real payload. Otherwise fallback to HTTP POST to ensure the reveal
+        // is processed by the server and students receive the event.
+        return await new Promise((resolve, reject) => {
+          let settled = false
+          const onRealtime = (e) => {
+            const d = e.detail || {}
+            if (d && d.type === 'question-results' && d.classId === classId && d.questionId === questionId) {
+              settled = true
+              window.removeEventListener('aula-realtime', onRealtime)
+              resolve(d)
+            }
+          }
+          window.addEventListener('aula-realtime', onRealtime)
+          setTimeout(async () => {
+            if (settled) return
+            window.removeEventListener('aula-realtime', onRealtime)
+            // fallback to HTTP
+            try {
+              const r = await fetch(`${API_BASE}/api/questions/${encodeURIComponent(questionId)}/reveal`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ classId, correctAnswer, points }) })
+              if (!r.ok) {
+                const txt = await r.text().catch(()=>null)
+                reject(new Error('revealQuestion failed: ' + (txt || r.status)))
+              } else {
+                const json = await r.json()
+                resolve(json)
+              }
+            } catch (e) { reject(e) }
+          }, 3000)
+        })
+      } catch(e) { console.warn('revealQuestion ws send failed', e) }
+    }
+  } catch (e) { console.warn('revealQuestion ws check failed', e) }
+
   const r = await fetch(`${API_BASE}/api/questions/${encodeURIComponent(questionId)}/reveal`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ classId, correctAnswer, points }) })
   if (!r.ok) {
     const txt = await r.text().catch(()=>null)
     throw new Error('revealQuestion failed: ' + (txt||r.status))
   }
   return await r.json()
+}
+
+export async function stopQuestion(classId, questionId) {
+  if (!USE_API) throw new Error('stopQuestion requires VITE_STORAGE_API');
+  // Prefer to send stop via WebSocket so students receive immediate instruction
+  try {
+    if (typeof _ws !== 'undefined' && _ws && _ws.readyState === WebSocket.OPEN) {
+      try {
+        _ws.send(JSON.stringify({ type: 'stop', classId, questionId }));
+        // optimistic: return success and let server broadcast results
+        return { ok: true, via: 'ws' };
+      } catch (e) {
+        console.warn('stopQuestion ws send failed', e);
+      }
+    }
+  } catch (e) {
+    console.warn('stopQuestion ws check failed', e);
+  }
+
+  // Fallback to REST API if websocket is not available
+  const r = await fetch(`${API_BASE}/api/questions/${encodeURIComponent(questionId)}/stop`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ classId }),
+  });
+  if (!r.ok) {
+    const txt = await r.text().catch(() => null);
+    throw new Error('stopQuestion failed: ' + (txt || r.status));
+  }
+  return await r.json();
 }
 

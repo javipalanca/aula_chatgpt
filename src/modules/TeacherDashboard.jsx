@@ -97,17 +97,9 @@ export default function TeacherDashboard({ onClose }) {
         // d: { questionId, total, counts }
         setLiveAnswers(prev => ({ ...prev, [d.questionId]: { total: d.total || 0, counts: d.counts || {} } }))
         if (d.total >= participants.length) {
-          setTimerRunning(false);
-          const correct = questionRunning.payload && questionRunning.payload.correctAnswer ? questionRunning.payload.correctAnswer : null;
-          if (correct) {
-            revealQuestion(selected, questionRunning.id, correct)
-              .then(res => {
-                setLastQuestionResults(res);
-                setSelectedCorrect(correct);
-                toast('Resultados mostrados');
-              })
-              .catch(e => toast('Error mostrando resultados: ' + (e.message || e)));
-          }
+          // all answered: perform the same reveal action as the manual button
+          const correct = questionRunning && questionRunning.payload && questionRunning.payload.correctAnswer ? questionRunning.payload.correctAnswer : null
+          handleRevealAction(correct)
         }
       }
       if (d.type === 'question-results' && d.classId === selected) {
@@ -183,6 +175,23 @@ export default function TeacherDashboard({ onClose }) {
     } catch (e) {
       console.warn('fetchParticipants failed', e)
     }
+  }
+
+  // Centralized reveal action used by buttons and automatic flow when all answered
+  async function handleRevealAction(preferredAnswer = null) {
+    if (!questionRunning) return toast('No hay pregunta activa')
+    // stop countdown immediately
+    setTimerRunning(false)
+    setSecondsLeft(0)
+    const preferred = preferredAnswer || (questionRunning.payload && questionRunning.payload.correctAnswer ? questionRunning.payload.correctAnswer : null)
+    const correct = preferred || prompt('Respuesta correcta (texto exacto)')
+    if (!correct) return
+    try {
+      const res = await revealQuestion(selected, questionRunning.id, correct)
+      setLastQuestionResults(res)
+      setSelectedCorrect(correct)
+      toast('Resultados mostrados')
+    } catch (e) { toast('Error mostrando resultados: ' + (e.message || e)) }
   }
 
   function handleCreate() {
@@ -368,20 +377,7 @@ export default function TeacherDashboard({ onClose }) {
                   <div className="text-6xl font-mono mb-4">{secondsLeft}s</div>
                   <div className="flex gap-3 items-center">
                     <Button onClick={handleLaunch} variant="primary">{questionRunning ? 'Lanzar siguiente' : 'Lanzar pregunta'}</Button>
-                    <Button onClick={async ()=>{
-                      if (!questionRunning) return toast('No hay pregunta activa')
-                      // stop countdown immediately
-                      setTimerRunning(false)
-                      const preferred = questionRunning.payload && questionRunning.payload.correctAnswer ? questionRunning.payload.correctAnswer : null
-                      const correct = preferred || prompt('Respuesta correcta (texto exacto)')
-                      if (!correct) return
-                      try {
-                        const res = await revealQuestion(selected, questionRunning.id, correct)
-                        setLastQuestionResults(res)
-                        setSelectedCorrect(correct)
-                        toast('Resultados mostrados')
-                      } catch (e) { toast('Error mostrando resultados: ' + (e.message || e)) }
-                    }} variant="ghost">Revelar</Button>
+                    <Button onClick={() => handleRevealAction()} variant="ghost">Revelar</Button>
                     <Button onClick={() => setShowScoresOverlay(true)} variant="ghost">Mostrar puntuación</Button>
                   </div>
                 </div>
@@ -532,16 +528,7 @@ export default function TeacherDashboard({ onClose }) {
             )}
             <div className="text-2xl font-mono mb-4">{secondsLeft}s</div>
             <div className="flex items-center justify-center gap-4">
-              <Button onClick={async ()=> {
-                const correct = prompt('Indica la respuesta correcta (texto exacto)')
-                if (!correct) return
-                try {
-                  const res = await revealQuestion(selected, questionRunning.id, correct)
-                  setLastQuestionResults(res)
-                  setSelectedCorrect(correct)
-                  toast('Resultados revelados')
-                } catch (e) { toast('Error al revelar: ' + (e.message || e)) }
-              }} variant="primary">Revelar resultado</Button>
+              <Button onClick={() => handleRevealAction()} variant="primary">Revelar resultado</Button>
               <Button onClick={() => setShowScoresOverlay(true)} variant="ghost">Mostrar puntuación</Button>
               <Button onClick={() => { setShowProfessorFull(false); setShowScoresOverlay(false) }} variant="destructive">Cerrar</Button>
               <Button onClick={() => {
