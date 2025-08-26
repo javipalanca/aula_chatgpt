@@ -1,6 +1,8 @@
 import React, { useState } from 'react'
 import { Button } from '../components/ui'
 
+const TEACHER_PWD = import.meta.env.VITE_TEACHER_PASSWORD || ''
+
 export default function Landing({ onEnterTeacher, onJoinStudent }) {
   const [code, setCode] = useState('')
   const [name, setName] = useState('')
@@ -17,7 +19,13 @@ export default function Landing({ onEnterTeacher, onJoinStudent }) {
             <h2 className="text-xl font-semibold mb-3">Entrar como docente</h2>
             <p className="text-sm text-slate-600 mb-4">Accede al panel de control de docente para seleccionar una clase y lanzar preguntas secuencialmente.</p>
             <div className="flex gap-2">
-              <Button variant="primary" onClick={onEnterTeacher}>Entrar como docente</Button>
+              <Button variant="primary" onClick={() => {
+                if (!TEACHER_PWD) { alert('Modo docente no configurado. Añade VITE_TEACHER_PASSWORD en .env'); return }
+                const v = prompt('Contraseña de docente')
+                if (v === null) return // cancelled
+                if (v === TEACHER_PWD) return onEnterTeacher()
+                alert('Contraseña incorrecta')
+              }}>Entrar como docente</Button>
             </div>
           </div>
 
