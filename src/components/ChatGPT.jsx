@@ -1,5 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
+import { getSessionId, submitEvaluatedAnswer } from '../lib/storage';
 
 export default function ChatGPT({ question, answer, onEvaluated }) {
   const [evaluation, setEvaluation] = useState(null);
@@ -23,9 +24,11 @@ export default function ChatGPT({ question, answer, onEvaluated }) {
         const data = await response.json();
         console.log('Evaluation data:', data);
         setEvaluation(data);
-        if (onEvaluated) {
-          onEvaluated(data);
-        }
+        if (onEvaluated) onEvaluated(data);
+        // also send evaluated answer to server so teacher UIs receive it as answer-evaluated
+        try {
+          await submitEvaluatedAnswer(question.payload && question.payload.classId ? question.payload.classId : (question.classId || ''), getSessionId(), question.id, answer, data);
+        } catch (e) { console.warn('submitEvaluatedAnswer failed', e); }
       } catch (err) {
         setError(err.message);
       } finally {

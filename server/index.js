@@ -312,6 +312,21 @@ try {
   })
 
   // Challenges
+  app.post('/api/participants/reset-scores', async (req, res) => {
+    const { classId } = req.body || {};
+    if (!classId) return res.status(400).json({ error: 'classId is required' });
+    try {
+      await participants.updateMany({ classId }, { $set: { score: 0 } });
+      // Optionally, broadcast an update to clients if needed
+      const docs = await fetchConnectedParticipants(classId, { includeDisconnected: true });
+      broadcast({ type: 'participants-updated', classId, participants: docs }, classId);
+      return res.json({ ok: true });
+    } catch (err) {
+      console.error('reset-scores failed', err);
+      return res.status(500).json({ ok: false, error: String(err) });
+    }
+  });
+
   app.get('/api/challenges', async (req, res) => {
     const classId = req.query.classId
     if (!classId) return res.json([])
@@ -732,8 +747,20 @@ try {
             // If subscriber is a student: mark participant as connected in DB and broadcast updated participants
             try {
               if (sessionId && role === 'student') {
-                // use upsert:true so if joinClass hasn't yet created the participant due to race, we still mark connected
-                await participants.updateOne({ classId: cid, sessionId }, { $set: { lastSeen: new Date(), connected: true } }, { upsert: true })
+                // Upsert by stable id `${classId}:${sessionId}` to avoid duplicate docs
+                const pid = `${cid}:${sessionId}`
+                try {
+                  const prev = await participants.findOne({ id: pid })
+                  const toSet = { lastSeen: new Date(), connected: true }
+                  // prefer explicit displayName supplied by client subscribe payload
+                  if (obj && obj.displayName) toSet.displayName = String(obj.displayName)
+                  else if (prev && prev.displayName) toSet.displayName = prev.displayName
+                  else toSet.displayName = `Alumno-${String(sessionId).slice(0,5)}`
+                  // ensure classId/sessionId stored on document for queries
+                  await participants.updateOne({ id: pid }, { $set: { ...toSet, classId: cid, sessionId } }, { upsert: true })
+                } catch (e) {
+                  console.warn('subscribe participant upsert failed', e)
+                }
                 try {
                   const docs = await fetchConnectedParticipants(cid)
                   broadcast({ type: 'participants-updated', classId: cid, participants: docs }, cid)

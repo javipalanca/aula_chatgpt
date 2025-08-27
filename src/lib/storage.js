@@ -451,11 +451,11 @@ export function initRealtime(baseUrl) {
 }
 
   // Subscribe client to a specific classId over the active websocket.
-  export function subscribeToClass(classId, { role = 'student' } = {}) {
+  export function subscribeToClass(classId, { role = 'student', displayName = null } = {}) {
       try {
         // ensure websocket exists
         if (!_ws) initRealtime()
-    const payloadObj = { type: 'subscribe', classId, sessionId: getSessionId(), role }
+  const payloadObj = { type: 'subscribe', classId, sessionId: getSessionId(), role, displayName }
   try { console.log('subscribeToClass: preparing subscribe payload', payloadObj) } catch(e) { console.warn('subscribeToClass log failed', e) }
     const payload = JSON.stringify(payloadObj)
         // if open, send immediately
@@ -526,6 +526,38 @@ export async function submitAnswer(classId, sessionId, questionId, answer) {
   const r = await fetch(`${API_BASE}/api/answers`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
   if (!r.ok) throw new Error('submitAnswer failed')
   return payload
+}
+
+// Submit an answer along with an evaluator result (score/feedback). Prefer WebSocket so the
+// server can broadcast `answer-evaluated` to teachers immediately; fallback to HTTP POST.
+export async function submitEvaluatedAnswer(classId, sessionId, questionId, answer, evaluation = {}) {
+  if (!USE_API) throw new Error('submitEvaluatedAnswer requires VITE_STORAGE_API')
+  const payload = { type: 'answer', classId, sessionId, questionId, answer, evaluation }
+  // Try websocket first for low-latency broadcast
+  try {
+    if (typeof _ws !== 'undefined' && _ws && _ws.readyState === WebSocket.OPEN) {
+      try {
+        _ws.send(JSON.stringify(payload))
+        return payload
+      } catch (e) {
+        console.warn('submitEvaluatedAnswer ws send failed, falling back to HTTP', e)
+      }
+    }
+  } catch (e) { console.warn('submitEvaluatedAnswer ws check failed', e) }
+
+  // HTTP fallback: send evaluation as part of the answer payload
+  try {
+    const httpPayload = { classId, sessionId, questionId, answer, evaluation }
+    const r = await fetch(`${API_BASE}/api/answers`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(httpPayload) })
+    if (!r.ok) {
+      const txt = await r.text().catch(()=>null)
+      throw new Error('submitEvaluatedAnswer failed: ' + (txt || r.status))
+    }
+    return httpPayload
+  } catch (e) {
+    console.warn('submitEvaluatedAnswer HTTP fallback failed', e)
+    throw e
+  }
 }
 
 export async function revealQuestion(classId, questionId, correctAnswer, points = 100) {

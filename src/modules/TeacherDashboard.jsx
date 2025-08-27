@@ -49,7 +49,9 @@ export default function TeacherDashboard({ onClose }) {
   const [blockViewIndex, setBlockViewIndex] = useState(0);
   const [showFinalModal, setShowFinalModal] = useState(false);
   const [finalWinners, setFinalWinners] = useState([]);
-  const [pendingAdvance, setPendingAdvance] = useState(null);
+  const [showNextBlockButton, setShowNextBlockButton] = useState(false);
+  const [showFinishGameButton, setShowFinishGameButton] = useState(false);
+  const [answeredQuestionIds, setAnsweredQuestionIds] = useState(new Set());
   const [lastRefresh, setLastRefresh] = useState(null);
 
   // All useEffect hooks and handler functions remain here for now.
@@ -69,6 +71,7 @@ export default function TeacherDashboard({ onClose }) {
       initRealtime()
       try { subscribeToClass(selected, { role: 'teacher' }) } catch(e) { console.warn('subscribeToClass failed', e) }
       fetchParticipants()
+      fetchAnsweredQuestions(selected)
       try {
         const cls = classes.find(c => (c.code || c.id) === selected) || {}
         const meta = cls.meta || {}
@@ -76,6 +79,7 @@ export default function TeacherDashboard({ onClose }) {
       } catch(e) { /* ignore */ }
     } else {
       setParticipants([])
+      setAnsweredQuestionIds(new Set())
     }
     return ()=> { /* cleanup handled globally by storage.js websocket */ }
   }, [selected])
@@ -181,6 +185,18 @@ export default function TeacherDashboard({ onClose }) {
     }
   }
 
+  async function fetchAnsweredQuestions(classId) {
+    try {
+      const r = await fetch(`/api/answers?classId=${encodeURIComponent(classId)}`)
+      if (!r.ok) return
+      const docs = await r.json()
+      const answeredIds = new Set(docs.map(d => d.questionId))
+      setAnsweredQuestionIds(answeredIds)
+    } catch (e) {
+      console.warn('fetchAnsweredQuestions failed', e)
+    }
+  }
+
   async function handleRevealAction(preferredAnswer = null) {
     if (!questionRunning) return toast('No hay pregunta activa')
     setTimerRunning(false)
@@ -242,8 +258,72 @@ export default function TeacherDashboard({ onClose }) {
         meta.currentQuestionIndex = 0;
         await persistClassMeta(selected, meta);
         setClasses(listClasses());
+        
+        // Reset local states
+        setQuestionRunning(null);
+        setLastQuestionResults(null);
+        setLiveAnswers({});
+        setSelectedCorrect(null);
+        setShowNextBlockButton(false);
+        setShowFinishGameButton(false);
+        setAnsweredQuestionIds(new Set());
+        setBlockViewIndex(0); // Ensure the first block is shown
+
+        // Reset participants' scores in the database
+        if (selected) {
+          await fetch(`/api/participants/reset-scores`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ classId: selected })
+          });
+          fetchParticipants(); // Refresh participants list
+        }
+
         toast('Juego reiniciado');
       } catch (e) { console.warn('restartGame failed', e); toast('No se pudo reiniciar') }
+  }
+
+  async function handleNextBlock() {
+    if (!selected) return;
+    const cls = classes.find(c => (c.code || c.id) === selected) || {};
+    const meta = cls.meta || {};
+
+    let nextBlockIndex = (typeof meta.currentBlockIndex === 'number' ? meta.currentBlockIndex : 0) + 1;
+    let nextQuestionIndex = 0;
+
+    const blocks = meta.blocks || [];
+    console.log('handleNextBlock: currentBlockIndex', meta.currentBlockIndex, 'nextBlockIndex', nextBlockIndex, 'blocks.length', blocks.length);
+    if (nextBlockIndex >= blocks.length) {
+      toast('No hay más bloques para avanzar.');
+      return;
+    }
+
+    meta.currentBlockIndex = nextBlockIndex;
+    meta.currentQuestionIndex = nextQuestionIndex;
+    meta.finished = false; // Ensure game is not marked as finished if advancing block
+
+    await persistClassMeta(selected, meta);
+    setClasses(listClasses());
+    setBlockViewIndex(nextBlockIndex);
+    setShowNextBlockButton(false);
+    toast('Avanzando al siguiente bloque');
+    await handleLaunch(); 
+  }
+
+  async function handleFinishGame() {
+    if (!selected) return;
+    const cls = classes.find(c => (c.code || c.id) === selected) || {};
+    const meta = cls.meta || {};
+
+    meta.finished = true;
+    await persistClassMeta(selected, meta);
+    setClasses(listClasses());
+    setShowFinishGameButton(false);
+
+    const tops = (participants || []).slice().sort((a,b)=> (b.score||0)-(a.score||0)).slice(0,3);
+    setFinalWinners(tops);
+    setShowFinalModal(true);
+    toast('Juego finalizado');
   }
 
   function handleShowCode(code) {
@@ -253,67 +333,16 @@ export default function TeacherDashboard({ onClose }) {
   }
 
   async function handleLaunch() {
-    // ... (toda la lógica de handleLaunch, que es enorme)
     console.log('handleLaunch invoked', { selected })
-  if (!selected) return toast('Selecciona una clase')
+    if (!selected) return toast('Selecciona una clase')
     try {
-      if (pendingAdvance) {
-        const clsPending = classes.find(c => (c.code || c.id) === selected) || {}
-        const metaPending = clsPending.meta || {}
-        metaPending.currentBlockIndex = pendingAdvance.nextBlockIndex
-        metaPending.currentQuestionIndex = pendingAdvance.nextQuestionIndex
-        if (metaPending.currentBlockIndex >= (metaPending.blocks ? metaPending.blocks.length : 0)) {
-          metaPending.finished = true
-          try { await persistClassMeta(selected, metaPending); setBlockViewIndex(metaPending.currentBlockIndex || 0); setClasses(listClasses()) } catch(e) { console.warn('persist pending final failed', e) }
-          try {
-            const winner = participants.slice().sort((a,b)=> (b.score||0)-(a.score||0))[0]
-            const finalPayload = { type: 'game-ended', winner: winner ? { name: winner.displayName, score: winner.score || 0 } : null }
-            const qEnd = { id: `q-end-${Date.now()}`, title: 'Juego terminado', options: [], duration: 10, payload: finalPayload }
-            const q = await createQuestion(selected, qEnd)
-            setQuestionRunning(q)
-            setSecondsLeft(q.duration || 10)
-            setTimerRunning(true)
-            setLastQuestionResults(null)
-            setSelectedCorrect(null)
-            setLiveAnswers(prev => ({ ...prev, [q.id]: { total: 0, counts: {} } }))
-            toast('Juego finalizado — se ha notificado a los alumnos')
-            const tops = (participants || []).slice().sort((a,b)=> (b.score||0)-(a.score||0)).slice(0,3)
-            setFinalWinners(tops)
-            setShowFinalModal(true)
-          } catch(e) { toast('No se pudo notificar fin de juego: ' + (e && e.message ? e.message : String(e))) }
-          setPendingAdvance(null)
-          return
-        }
-        try { await persistClassMeta(selected, metaPending); setBlockViewIndex(metaPending.currentBlockIndex || 0); setClasses(listClasses()) } catch(e) { console.warn('persist pending advance failed', e) }
-        setPendingAdvance(null)
-        try {
-          const blocksP = metaPending.blocks || []
-          const blk = blocksP[metaPending.currentBlockIndex]
-          if (!blk || !Array.isArray(blk.questions) || blk.questions.length === 0) return toast('Bloque vacío')
-          const qIdxP = Math.min(metaPending.currentQuestionIndex, (blk.questions.length || 0) - 1)
-          const nextP = blk.questions[qIdxP]
-          const payloadP = { ...(nextP.payload || {}), blockId: blk.id, blockName: blk.name, blockIndex: metaPending.currentBlockIndex, questionIndex: qIdxP }
-          const optionsP = Array.isArray(nextP.options) ? nextP.options : []
-          const qPayloadP = { id: nextP.id || `q-${Date.now()}`, title: nextP.title, options: optionsP, duration: nextP.duration || 30, payload: payloadP }
-          const q2 = await createQuestion(selected, qPayloadP)
-          setQuestionRunning(q2)
-          setSecondsLeft(q2.duration || 30)
-          setTimerRunning(true)
-          setLastQuestionResults(null)
-          setSelectedCorrect(null)
-          setLiveAnswers(prev => ({ ...prev, [q2.id]: { total: 0, counts: {} } }))
-          try { subscribeToClass(selected, { role: 'teacher' }) } catch(e) { console.warn('subscribeToClass on launch failed', e) }
-          toast('Pregunta lanzada: ' + q2.title)
-        } catch (e) { console.error('create next after pending advance failed', e); toast('No se pudo lanzar la siguiente pregunta') }
-        return
-      }
       const cls = classes.find(c => (c.code || c.id) === selected) || {}
       const meta = cls.meta || {}
       if (!meta.blocks) {
         const buildBlock = (id, name, items, mapper) => ({ id, name, questions: items.map(mapper) })
         const verifMapper = (v, idx) => ({ id: `q-verif-${idx}-${Date.now()}`, title: v.q, duration: 30, options: Array.isArray(v.options) ? v.options.slice() : [], payload: { source: 'VERIF_QUIZ', explain: v.explain, correctAnswer: (Array.isArray(v.options) && typeof v.a !== 'undefined') ? v.options[v.a] : null } })
         const ethicsMapper = (e, idx) => ({ id: `q-eth-${idx}-${Date.now()}`, title: e.text, duration: 30, options: ['No es correcto','Es correcto'], payload: { source: 'ETHICS_SCENARIOS', why: e.why, correctAnswer: e.good ? 'Es correcto' : 'No es correcto' } })
-  const badMapper = (b, idx) => ({ id: `q-bad-${idx}-${Date.now()}`, title: b.bad, duration: 25, options: [], payload: { source: 'BAD_PROMPTS', tip: b.tip, evaluation: 'prompt' } })
+        const badMapper = (b, idx) => ({ id: `q-bad-${idx}-${Date.now()}`, title: b.bad, duration: 25, options: [], payload: { source: 'BAD_PROMPTS', tip: b.tip, evaluation: 'prompt' } })
         meta.blocks = [
           buildBlock('ETHICS', 'Escenarios éticos', ETHICS_SCENARIOS, ethicsMapper),
           buildBlock('VERIF', 'Verificación', VERIF_QUIZ, verifMapper),
@@ -321,7 +350,10 @@ export default function TeacherDashboard({ onClose }) {
         ]
         meta.currentBlockIndex = 0
         meta.currentQuestionIndex = 0
-        try { await persistClassMeta(selected, meta); console.log('persisted initial class meta', { classId: selected, meta }); setBlockViewIndex(meta.currentBlockIndex || 0); setClasses(listClasses()) } catch(e) { console.warn('persist class meta failed', e) }
+        await persistClassMeta(selected, meta); 
+        console.log('persisted initial class meta', { classId: selected, meta }); 
+        setBlockViewIndex(meta.currentBlockIndex || 0); 
+        setClasses(listClasses());
       }
 
       if (meta.finished) {
@@ -330,90 +362,66 @@ export default function TeacherDashboard({ onClose }) {
           return toast('El juego ya ha finalizado')
         }
         await handleRestartGame();
+        return; // Exit after restarting
       }
 
-      const bIndex = (typeof blockViewIndex === 'number') ? blockViewIndex : (typeof meta.currentBlockIndex === 'number' ? meta.currentBlockIndex : 0)
-      const qIndex = (typeof meta.currentQuestionIndex === 'number' ? meta.currentQuestionIndex : 0)
+      const currentBlockIndex = (typeof meta.currentBlockIndex === 'number' ? meta.currentBlockIndex : 0)
+      const currentQuestionIndex = (typeof meta.currentQuestionIndex === 'number' ? meta.currentQuestionIndex : 0)
+      console.log('handleLaunch: currentBlockIndex', currentBlockIndex, 'currentQuestionIndex', currentQuestionIndex);
       const blocks = meta.blocks || []
-      if (bIndex >= blocks.length) {
+
+      if (currentBlockIndex >= blocks.length) {
+        // This case should ideally be caught by meta.finished, but as a safeguard
         return toast('No quedan bloques por lanzar')
       }
-      const block = blocks[bIndex]
+
+      const block = blocks[currentBlockIndex]
       if (!block || !Array.isArray(block.questions) || block.questions.length === 0) return toast('Bloque vacío')
-      const qIdx = Math.min(qIndex, block.questions.length - 1)
-      const next = block.questions[qIdx]
 
-      const payload = { ...(next.payload || {}), blockId: block.id, blockName: block.name, blockIndex: bIndex, questionIndex: qIdx }
-      const options = Array.isArray(next.options) ? next.options : []
-      const qPayload = { id: next.id || `q-${Date.now()}`, title: next.title, options, duration: next.duration || 30, payload }
-
-      let nextBlockIndex = bIndex
-      let nextQuestionIndex = qIdx + 1
-      if (nextQuestionIndex >= (block.questions.length || 0)) {
-        nextBlockIndex = bIndex + 1
-        nextQuestionIndex = 0
+      const questionToLaunch = block.questions[currentQuestionIndex]
+      if (!questionToLaunch) {
+        // This can happen if currentQuestionIndex is out of bounds for the current block
+        return toast('No quedan preguntas en el bloque actual')
       }
 
-      if (nextBlockIndex >= (meta.blocks ? meta.blocks.length : 0)) {
-        try {
-          const winner = participants.slice().sort((a,b)=> (b.score||0)-(a.score||0))[0]
-          const finalPayload = { type: 'game-ended', winner: winner ? { name: winner.displayName, score: winner.score || 0 } : null }
-          const qEnd = { id: `q-end-${Date.now()}`, title: 'Juego terminado', options: [], duration: 10, payload: finalPayload }
-          const q = await createQuestion(selected, qEnd)
-          setQuestionRunning(q)
-          setSecondsLeft(q.duration || 10)
-          setTimerRunning(true)
-          setLastQuestionResults(null)
-          setSelectedCorrect(null)
-          setLiveAnswers(prev => ({ ...prev, [q.id]: { total: 0, counts: {} } }))
-          try { subscribeToClass(selected, { role: 'teacher' }) } catch(e) { console.warn('subscribeToClass on final failed', e) }
-          toast('Juego finalizado — se ha notificado a los alumnos')
-          meta.currentBlockIndex = nextBlockIndex
-          meta.currentQuestionIndex = nextQuestionIndex
-          meta.finished = true
-          try { await persistClassMeta(selected, meta); setBlockViewIndex(meta.currentBlockIndex || 0); setClasses(listClasses()) } catch(e) { console.warn('persist class meta final failed', e) }
-          const tops = (participants || []).slice().sort((a,b)=> (b.score||0)-(a.score||0)).slice(0,3)
-          setFinalWinners(tops)
-          setShowFinalModal(true)
-        } catch(e) {
-          console.error('Error creando/cargando challenge final', e)
-          toast('No se pudo notificar fin de juego: ' + (e && e.message ? e.message : String(e)))
-        }
-        return
+      const payload = { ...(questionToLaunch.payload || {}), blockId: block.id, blockName: block.name, blockIndex: currentBlockIndex, questionIndex: currentQuestionIndex }
+      const options = Array.isArray(questionToLaunch.options) ? questionToLaunch.options : []
+      const qPayload = { id: questionToLaunch.id || `q-${Date.now()}`, title: questionToLaunch.title, options, duration: questionToLaunch.duration || 30, payload }
+
+      // Launch the current question
+      const q = await createQuestion(selected, qPayload)
+      setQuestionRunning(q)
+      setSecondsLeft(q.duration || 30)
+      setTimerRunning(true)
+      setLastQuestionResults(null)
+      setSelectedCorrect(null)
+      setLiveAnswers(prev => ({ ...prev, [q.id]: { total: 0, counts: {} } }))
+      try { subscribeToClass(selected, { role: 'teacher' }) } catch(e) { console.warn('subscribeToClass on launch failed', e) }
+      toast('Pregunta lanzada: ' + q.title)
+
+      // Advance question index for the next launch
+      meta.currentQuestionIndex = currentQuestionIndex + 1;
+
+      // Determine if next block/game end buttons should be shown
+      const isLastQuestionOfBlock = currentQuestionIndex === (block.questions.length - 1);
+      const isLastBlock = (currentBlockIndex + 1) >= (meta.blocks ? meta.blocks.length : 0);
+
+      if (isLastQuestionOfBlock && isLastBlock) {
+        setShowFinishGameButton(true);
+        setShowNextBlockButton(false);
+      } else if (isLastQuestionOfBlock) {
+        setShowNextBlockButton(true);
+        setShowFinishGameButton(false);
+      } else {
+        setShowNextBlockButton(false);
+        setShowFinishGameButton(false);
       }
 
-      try {
-        const q = await createQuestion(selected, qPayload)
-        setQuestionRunning(q)
-        setSecondsLeft(q.duration || 30)
-        setTimerRunning(true)
-        setLastQuestionResults(null)
-        setSelectedCorrect(null)
-        setLiveAnswers(prev => ({ ...prev, [q.id]: { total: 0, counts: {} } }))
-        try { subscribeToClass(selected, { role: 'teacher' }) } catch(e) { console.warn('subscribeToClass on launch failed', e) }
-        toast('Pregunta lanzada: ' + q.title)
+      // Persist meta without advancing block index here, as block advancement is now manual
+      await persistClassMeta(selected, meta);
+      setClasses(listClasses()); // Refresh classes to reflect updated meta
+      setBlockViewIndex(currentBlockIndex); // Keep block view on current block
 
-        const isLastOfBlock = qIdx === ((block.questions || []).length - 1)
-        if (isLastOfBlock) {
-          setPendingAdvance({ nextBlockIndex, nextQuestionIndex })
-        } else {
-          meta.currentBlockIndex = nextBlockIndex
-          meta.currentQuestionIndex = nextQuestionIndex
-          if (nextBlockIndex >= (meta.blocks ? meta.blocks.length : 0)) {
-            meta.finished = true
-          }
-          try { await persistClassMeta(selected, meta); setBlockViewIndex(meta.currentBlockIndex || 0); setClasses(listClasses()) } catch(e) { console.warn('persist class meta failed', e) }
-          if (meta.finished) {
-            const tops = (participants || []).slice().sort((a,b)=> (b.score||0)-(a.score||0)).slice(0,3)
-            setFinalWinners(tops)
-            setShowFinalModal(true)
-          }
-        }
-      } catch (e) {
-        console.error('createQuestion failed', e)
-        toast('Error creando/cargando pregunta: ' + (e && e.message ? e.message : String(e)))
-        return
-      }
     } catch (err) {
       console.error('handleLaunch failed', err)
       toast('Error lanzando pregunta: ' + (err && err.message ? err.message : String(err)))
@@ -421,18 +429,17 @@ export default function TeacherDashboard({ onClose }) {
   }
 
   async function jumpToQuestion(blockIndex, questionIndex) {
-    // ... (toda la lógica de jumpToQuestion)
+    console.log('jumpToQuestion invoked', { blockIndex, questionIndex });
     try {
       if (!selected) return
-      setBlockViewIndex(blockIndex)
-      toast('Lanzando pregunta ' + (questionIndex + 1) + ' del bloque ' + (blockIndex+1))
       const cls = classes.find(c => (c.code || c.id) === selected) || {}
       const meta = cls.meta || {}
       if (!meta.blocks) {
+        // Initialize blocks if they don't exist
         const buildBlock = (id, name, items, mapper) => ({ id, name, questions: items.map(mapper) })
         const verifMapper = (v, idx) => ({ id: `q-verif-${idx}-${Date.now()}`, title: v.q, duration: v.duration || 30, options: Array.isArray(v.options) ? v.options.slice() : [], payload: { source: 'VERIF_QUIZ', explain: v.explain, correctAnswer: (Array.isArray(v.options) && typeof v.a !== 'undefined') ? v.options[v.a] : null } })
         const ethicsMapper = (e, idx) => ({ id: `q-eth-${idx}-${Date.now()}`, title: e.text, duration: e.duration || 30, options: ['No es correcto','Es correcto'], payload: { source: 'ETHICS_SCENARIOS', why: e.why, correctAnswer: e.good ? 'Es correcto' : 'No es correcto' } })
-  const badMapper = (b, idx) => ({ id: `q-bad-${idx}-${Date.now()}`, title: b.bad, duration: b.duration || 30, options: [], payload: { source: 'BAD_PROMPTS', tip: b.tip, evaluation: 'prompt' } })
+        const badMapper = (b, idx) => ({ id: `q-bad-${idx}-${Date.now()}`, title: b.bad, duration: b.duration || 30, options: [], payload: { source: 'BAD_PROMPTS', tip: b.tip, evaluation: 'prompt' } })
         meta.blocks = [
           buildBlock('ETHICS', 'Escenarios éticos', ETHICS_SCENARIOS, ethicsMapper),
           buildBlock('VERIF', 'Verificación', VERIF_QUIZ, verifMapper),
@@ -440,67 +447,29 @@ export default function TeacherDashboard({ onClose }) {
         ]
         meta.currentBlockIndex = 0
         meta.currentQuestionIndex = 0
-        try { await persistClassMeta(selected, meta); setBlockViewIndex(meta.currentBlockIndex || 0); setClasses(listClasses()) } catch(e) { console.warn('persist class meta failed', e) }
+        await persistClassMeta(selected, meta);
+        setClasses(listClasses());
       }
+
       const blocks = meta.blocks || []
       if (blockIndex >= blocks.length) return toast('Bloque inválido')
       const block = blocks[blockIndex]
       if (!block || !Array.isArray(block.questions) || block.questions.length === 0) return toast('Bloque vacío')
       const qIdx = Math.min(questionIndex, block.questions.length - 1)
-      const next = block.questions[qIdx]
-      const payload = { ...(next.payload || {}), blockId: block.id, blockName: block.name, blockIndex, questionIndex: qIdx }
-      const options = Array.isArray(next.options) ? next.options : []
-      const qPayload = { id: next.id || `q-${Date.now()}`, title: next.title, options, duration: next.duration || 30, payload }
-      let nextBlockIndex = blockIndex
-      let nextQuestionIndex = qIdx + 1
-      if (nextQuestionIndex >= (block.questions.length || 0)) { nextBlockIndex = blockIndex + 1; nextQuestionIndex = 0 }
-      if (nextBlockIndex >= (meta.blocks ? meta.blocks.length : 0)) {
-        meta.currentBlockIndex = nextBlockIndex
-        meta.currentQuestionIndex = nextQuestionIndex
-        meta.finished = true
-        try { await persistClassMeta(selected, meta); setBlockViewIndex(meta.currentBlockIndex || 0); setClasses(listClasses()) } catch(e) { console.warn('persist class meta final failed', e) }
-        try {
-          const qEnd = { id: `q-end-${Date.now()}`, title: 'Juego terminado', options: [], duration: 10, payload: { type: 'game-ended' } }
-          const q = await createQuestion(selected, qEnd)
-          setQuestionRunning(q)
-          setSecondsLeft(q.duration || 10)
-          setTimerRunning(true)
-          setLastQuestionResults(null)
-          setSelectedCorrect(null)
-          setLiveAnswers(prev => ({ ...prev, [q.id]: { total: 0, counts: {} } }))
-          toast('Juego finalizado — se ha notificado a los alumnos')
-        } catch(e) { toast('No se pudo notificar fin de juego: ' + (e.message || e)) }
-        return
-      }
-      meta.currentBlockIndex = nextBlockIndex
-      meta.currentQuestionIndex = nextQuestionIndex
-      try {
-        const q = await createQuestion(selected, qPayload)
-        setQuestionRunning(q)
-        setSecondsLeft(q.duration || 30)
-        setTimerRunning(true)
-        setLastQuestionResults(null)
-        setSelectedCorrect(null)
-        setLiveAnswers(prev => ({ ...prev, [q.id]: { total: 0, counts: {} } }))
-        try { subscribeToClass(selected, { role: 'teacher' }) } catch(e) { console.warn('subscribeToClass on launch failed', e) }
-        toast('Pregunta lanzada: ' + q.title)
 
-        meta.currentBlockIndex = nextBlockIndex
-        meta.currentQuestionIndex = nextQuestionIndex
-        if (nextBlockIndex >= (meta.blocks ? meta.blocks.length : 0)) {
-          meta.finished = true
-        }
-        try { await persistClassMeta(selected, meta); setBlockViewIndex(meta.currentBlockIndex || 0); setClasses(listClasses()) } catch(e) { console.warn('persist class meta failed', e) }
-        if (meta.finished) {
-          const tops = (participants || []).slice().sort((a,b)=> (b.score||0)-(a.score||0)).slice(0,3)
-          setFinalWinners(tops)
-          setShowFinalModal(true)
-        }
-      } catch (e) {
-        console.error('jumpToQuestion createQuestion failed', e)
-        toast('Error creando/cargando pregunta: ' + (e && e.message ? e.message : String(e)))
-      }
-    } catch (e) { console.error('jumpToQuestion failed', e); toast('No se pudo seleccionar o lanzar la pregunta') }
+      // Update meta with the selected question's indices
+      meta.currentBlockIndex = blockIndex
+      meta.currentQuestionIndex = qIdx
+      meta.finished = false; // Ensure game is not marked as finished if jumping to a question
+      await persistClassMeta(selected, meta);
+      setClasses(listClasses()); // Refresh classes to reflect updated meta
+      setBlockViewIndex(blockIndex); // Update UI to show the selected block
+      toast('Pregunta seleccionada: ' + (qIdx + 1) + ' del bloque ' + (blockIndex+1))
+
+    } catch (e) { 
+      console.error('jumpToQuestion failed', e);
+      toast('No se pudo seleccionar la pregunta: ' + (e.message || e));
+    }
   }
 
   const selectedClassData = selected ? classes.find(c => (c.code || c.id) === selected) : null;
@@ -532,22 +501,26 @@ export default function TeacherDashboard({ onClose }) {
         <div className="flex flex-col md:flex-row md:items-start md:gap-6">
           <div className="flex-1">
             <Timeline 
-              classData={selectedClassData}
-              blockViewIndex={blockViewIndex}
-              setBlockViewIndex={setBlockViewIndex}
-              questionRunning={questionRunning}
-              onJumpToQuestion={jumpToQuestion}
-            />
+                classData={selectedClassData}
+                blockViewIndex={blockViewIndex}
+                setBlockViewIndex={setBlockViewIndex}
+                questionRunning={questionRunning}
+                onJumpToQuestion={jumpToQuestion}
+                answeredQuestionIds={answeredQuestionIds}
+              />
             <QuestionControl 
               questionRunning={questionRunning}
               secondsLeft={secondsLeft}
               liveAnswers={liveAnswers}
               lastQuestionResults={lastQuestionResults}
               selectedCorrect={selectedCorrect}
-              pendingAdvance={pendingAdvance}
               onLaunch={handleLaunch}
               onReveal={handleRevealAction}
               onShowScores={() => setShowScoresOverlay(true)}
+              showNextBlockButton={showNextBlockButton}
+              showFinishGameButton={showFinishGameButton}
+              onNextBlock={handleNextBlock}
+              onFinishGame={handleFinishGame}
             />
           </div>
           <ParticipantsPanel participants={participants} />

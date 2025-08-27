@@ -9,10 +9,13 @@ export function QuestionControl({
   liveAnswers,
   lastQuestionResults,
   selectedCorrect,
-  pendingAdvance,
   onLaunch,
   onReveal,
   onShowScores,
+  showNextBlockButton,
+  showFinishGameButton,
+  onNextBlock,
+  onFinishGame,
 }) {
   return (
     <div>
@@ -68,9 +71,21 @@ export function QuestionControl({
       <div className="text-6xl font-mono mb-4">{secondsLeft}s</div>
 
       <div className="flex gap-3 items-center">
-        <Button onClick={onLaunch} variant="primary">
-          {pendingAdvance ? 'Continuar' : (questionRunning ? 'Lanzar siguiente' : 'Lanzar pregunta')}
-        </Button>
+        {!showNextBlockButton && !showFinishGameButton && (
+          <Button onClick={onLaunch} variant="primary">
+            {questionRunning ? 'Lanzar siguiente' : 'Lanzar pregunta'}
+          </Button>
+        )}
+        {showNextBlockButton && (
+          <Button onClick={onNextBlock} variant="primary">
+            Siguiente Bloque
+          </Button>
+        )}
+        {showFinishGameButton && (
+          <Button onClick={onFinishGame} variant="primary">
+            Finalizar Juego
+          </Button>
+        )}
         <Button onClick={onReveal} variant="ghost">Revelar</Button>
         <Button onClick={onShowScores} variant="ghost">Mostrar puntuación</Button>
       </div>

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { initRealtime, subscribeToClass, unsubscribeFromClass, joinClass, submitAnswer, getSessionId, listClassParticipants } from '../lib/storage'
 import { startHeartbeat, stopHeartbeat, leaveClass } from '../lib/storage'
 import { Button, clsx } from '../components/ui'
@@ -21,6 +21,7 @@ export default function StudentView({ classCode, displayName, onBack }) {
   const [correctAnswer, setCorrectAnswer] = useState(null)
   const [participants, setParticipants] = useState([])
   const [showScoresOverlay, setShowScoresOverlay] = useState(false)
+  const currentQuestionRef = useRef(null)
 
   useEffect(()=>{
     if (!classCode) return
@@ -37,18 +38,22 @@ export default function StudentView({ classCode, displayName, onBack }) {
       }
     })()
     // subscribe via websocket to class events
-    const trySub = () => subscribeToClass(classCode)
+  const trySub = () => subscribeToClass(classCode, { displayName: displayName || `Alumno-${getSessionId().slice(0,5)}` })
     trySub()
 
     function onRealtime(e) {
       const d = e.detail || {}
-  try { console.log('StudentView received realtime', d) } catch(e) { console.warn('StudentView log failed', e) }
+      try { console.log('StudentView received realtime', d) } catch(e) { console.warn('StudentView log failed', e) }
       if (d.classId !== classCode) return
+      // Use the ref to read the latest currentQuestion inside this listener to avoid stale closures
+      const cq = currentQuestionRef.current
       if (d.type === 'question-launched') {
         setCurrentQuestion(d.question)
-        setSecondsLeft(d.question.payload && typeof d.question.payload.duration === 'number' ? d.question.payload.duration : 30)
+        // Prefer top-level duration (server may copy payload.duration to question.duration for students)
+        const announcedDuration = (d.question && typeof d.question.duration === 'number') ? Number(d.question.duration) : (d.question.payload && typeof d.question.payload.duration === 'number' ? Number(d.question.payload.duration) : 30)
+        setSecondsLeft(announcedDuration)
         setHasAnswered(false)
-  // distribution handled on teacher side; reset local counters
+        // distribution handled on teacher side; reset local counters
         setAnswersCount(0)
         setUserAnswer(null)
         setPromptText('')
@@ -56,32 +61,33 @@ export default function StudentView({ classCode, displayName, onBack }) {
         setPromptSubmitted(false)
         setCorrectAnswer(null)
       }
-      if (d.type === 'answers-count' && d.questionId === (currentQuestion && currentQuestion.id)) {
+      if (d.type === 'answers-count' && d.questionId && cq && d.questionId === cq.id) {
         setAnswersCount(d.total || 0)
       }
       if (d.type === 'question-results') {
-  // Log for debugging
-  try { console.debug('StudentView question-results received', { questionId: d.questionId, currentQuestionId: currentQuestion && currentQuestion.id, raw: d }) } catch(e) { /* ignore */ }
-  // If it's for the current question, or if for any reason questionId doesn't match but class-level reveal arrived,
-  // stop the timer and show results as a safe fallback.
-  if (!currentQuestion || d.questionId === (currentQuestion && currentQuestion.id) || d.classId === classCode) {
-    // stop local timer and show results
-    setSecondsLeft(0)
-    setHasAnswered(true)
-    // distribution and correctAnswer come from server; update correctAnswer
-    setCorrectAnswer(d.correctAnswer)
-    // optionally show awarded points in payload
-    if (d.updatedScores) {
-      const me = d.updatedScores.find(s => s.sessionId === getSessionId())
-      if (me) setScore(me.score || 0)
-    }
-    // If evaluations were included (open/prompt), do nothing, handled by ChatGPT component
-    try {
-      // Some broadcasts include answers/evaluations in different shapes
-      // Stop any pending indicators when results arrive
-  console.info('Evaluation completed or revealed for question', d.questionId)
-    } catch (e) { /* ignore */ }
-  }
+        // Log for debugging
+        try { console.debug('StudentView question-results received', { questionId: d.questionId, currentQuestionId: cq && cq.id, raw: d }) } catch(e) { /* ignore */ }
+        // If it's for the current question, or if there's no locally active question but a class-level reveal
+        // intended for the whole class (questionId might be undefined), stop the timer and show results.
+        const isForCurrent = !cq || (d.questionId && cq && d.questionId === cq.id) || (d.classId === classCode && !d.questionId)
+        if (isForCurrent) {
+          // stop local timer and show results
+          setSecondsLeft(0)
+          setHasAnswered(true)
+          // distribution and correctAnswer come from server; update correctAnswer
+          setCorrectAnswer(d.correctAnswer)
+          // optionally show awarded points in payload
+          if (d.updatedScores) {
+            const me = d.updatedScores.find(s => s.sessionId === getSessionId())
+            if (me) setScore(me.score || 0)
+          }
+          // If evaluations were included (open/prompt), do nothing, handled by ChatGPT component
+          try {
+            // Some broadcasts include answers/evaluations in different shapes
+            // Stop any pending indicators when results arrive
+            console.info('Evaluation completed or revealed for question', d.questionId)
+          } catch (e) { /* ignore */ }
+        }
       }
       if (d.type === 'participants-updated') {
         try { setParticipants(d.participants || []) } catch(e) { /* ignore */ }
@@ -103,6 +109,9 @@ export default function StudentView({ classCode, displayName, onBack }) {
     window.addEventListener('beforeunload', cleanup)
     return () => { cleanup() }
   }, [classCode])
+
+  // keep a ref in sync with the currentQuestion so the realtime listener sees latest value
+  useEffect(() => { currentQuestionRef.current = currentQuestion }, [currentQuestion])
 
   // local seconds countdown
   useEffect(()=>{

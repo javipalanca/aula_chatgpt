@@ -16,7 +16,7 @@ const buildPreviewBlocks = () => {
   ];
 };
 
-export function Timeline({ classData, blockViewIndex, setBlockViewIndex, questionRunning, onJumpToQuestion }) {
+export function Timeline({ classData, blockViewIndex, setBlockViewIndex, questionRunning, onJumpToQuestion, answeredQuestionIds }) {
   const currentMeta = classData.meta || {};
   const blocks = currentMeta.blocks ? currentMeta.blocks : buildPreviewBlocks();
 
@@ -82,11 +82,11 @@ export function Timeline({ classData, blockViewIndex, setBlockViewIndex, questio
             <div className="flex items-center justify-between gap-4 px-2 w-full">
               {currentQuestions.map((q, i) => {
                 const isActive = questionRunning && questionRunning.payload && Number(questionRunning.payload.blockIndex) === blockIndex && Number(questionRunning.payload.questionIndex) === i;
-                const isLaunched = i <= launchedUpTo;
+                const isAnswered = answeredQuestionIds.has(q.id);
                 const baseClasses = 'w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium shadow-sm transition-transform';
                 const colorClass = isActive
                   ? 'bg-yellow-400 text-black ring-2 ring-yellow-300 scale-105'
-                  : isLaunched
+                  : isAnswered
                   ? 'bg-green-500 text-white'
                   : 'bg-slate-700 text-white/90';
 
