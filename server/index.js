@@ -20,25 +20,52 @@ app.use(express.json())
 const OLLAMA_URL = process.env.VITE_OLLAMA_URL || ''
 const OLLAMA_MODEL = process.env.VITE_OLLAMA_MODEL || ''
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || ''
-const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-3.5-turbo'
+const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o'
+const OPENAI_URL = process.env.OPENAI_URL || ''
 
 // Evaluate an open-text answer using an LLM. Prefer OpenAI (ChatGPT) when OPENAI_API_KEY
 // is available; otherwise fall back to Ollama if configured. The evaluator is instructed
 // to return strict JSON: { score: 0..1, feedback: '...' }.
 async function evaluateAnswerWithLLM(questionPayload = {}, answerText = '') {
   const questionText = (questionPayload && (questionPayload.title || questionPayload.prompt || questionPayload.question)) ? (questionPayload.title || questionPayload.prompt || questionPayload.question) : ''
-  const system = `Eres un evaluador objetivo que puntúa respuestas de estudiantes. Devuelve únicamente JSON válido con dos campos: score (número entre 0 y 1) y feedback (cadena corta).`
-  const user = `Pregunta: ${String(questionText).slice(0,1000)}\n\nRespuesta del alumno: ${String(answerText).slice(0,2000)}\n\nEvalúa la respuesta: asigna un score entre 0 (muy mala) y 1 (excelente) según la calidad, claridad y cumplimiento de la consigna. Devuelve JSON: {"score": 0.0-1.0, "feedback": "..." }.`
+  const isBadPromptImprovement = (questionPayload && questionPayload.source === 'BAD_PROMPTS')
+  const isPromptEvaluation = (questionPayload && (questionPayload.evaluation === 'prompt' || questionPayload.source === 'PROMPTS'))
+
+  const system = isBadPromptImprovement
+    ? `Eres un experto en ingeniería de prompts. El siguiente es un mal prompt que un estudiante ha intentado mejorar. Evalúa cuánto ha mejorado el prompt del estudiante en comparación con el original. Devuelve únicamente JSON válido con dos campos: score (número entre 1 y 100) y feedback (cadena corta y constructiva). Un buen prompt debe ser claro, específico, y ético.`
+    : isPromptEvaluation
+    ? `Eres un experto en ingeniería de prompts. Evalúa la calidad del siguiente prompt de un estudiante. Devuelve únicamente JSON válido con dos campos: score (número entre 1 y 100) y feedback (cadena corta y constructiva). Un buen prompt debe ser claro, específico, y ético. Por ejemplo, un prompt para hacer trampa en un examen es de muy baja calidad (score 1).`
+    : `Eres un evaluador objetivo que puntúa respuestas de estudiantes. Devuelve únicamente JSON válido con dos campos: score (número entre 1 y 100) y feedback (cadena corta).`
+
+  const user = isBadPromptImprovement
+    ? `Mal prompt original: ${String(questionText).slice(0,1000)}
+
+Prompt mejorado del alumno: ${String(answerText).slice(0,2000)}
+
+Evalúa la mejora del prompt: asigna un score entre 1 (poca o nula mejora) y 100 (excelente mejora) y da feedback. Devuelve JSON: {"score": 1-100, "feedback": "..." }.`
+    : isPromptEvaluation
+    ? `Prompt del alumno: ${String(answerText).slice(0,2000)}
+
+Evalúa la calidad de este prompt: asigna un score entre 1 (muy malo) y 100 (excelente) y da feedback. Devuelve JSON: {"score": 1-100, "feedback": "..." }.`
+    : `Pregunta: ${String(questionText).slice(0,1000)}
+
+Respuesta del alumno: ${String(answerText).slice(0,2000)}
+
+Evalúa la respuesta: asigna un score entre 1 (muy mala) y 100 (excelente) según la calidad, claridad y cumplimiento de la consigna. Devuelve JSON: {"score": 1-100, "feedback": "..." }.`
+  
   // Try OpenAI Chat Completions first
   if (OPENAI_API_KEY) {
     try {
-      const url = 'https://api.openai.com/v1/chat/completions'
+      const url = `${OPENAI_URL}/v1/chat/completions`
       const body = { model: OPENAI_MODEL, messages: [ { role: 'system', content: system }, { role: 'user', content: user } ], temperature: 0.2, max_tokens: 200 }
-      const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${OPENAI_API_KEY}` }, body: JSON.stringify(body) })
+      try { console.info('LLM: using OpenAI', { provider: 'openai', model: OPENAI_MODEL, url }) } catch(e) { /* ignore logging errors */ }
+  try { console.debug('OpenAI request body (truncated)', JSON.stringify(body).slice(0,1000)) } catch(e) { /* ignore */ }
+  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${OPENAI_API_KEY}` }, body: JSON.stringify(body) })
       const text = await r.text()
       if (!r.ok) {
-        console.warn('OpenAI eval failed', r.status, text.slice(0,200))
+        try { console.warn('OpenAI eval failed', { status: r.status, body: String(text).slice(0,200) }) } catch(e) { console.warn('OpenAI eval failed', r.status) }
       } else {
+        try { console.debug('OpenAI raw response (truncated):', String(text).slice(0,2000)) } catch(e) { /* ignore */ }
         // Try parse JSON from content
         try {
           const parsed = JSON.parse(text)
@@ -71,11 +98,14 @@ async function evaluateAnswerWithLLM(questionPayload = {}, answerText = '') {
   if (OLLAMA_URL) {
     try {
       const url = OLLAMA_URL.replace(/\/$/, '') + '/api/generate'
-      const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: OLLAMA_MODEL, prompt: `${system}\n\n${user}`, max_tokens: 200 }) })
+      try { console.info('LLM: using Ollama', { provider: 'ollama', model: OLLAMA_MODEL, url }) } catch(e) { /* ignore logging errors */ }
+  try { console.debug('Ollama request body (truncated)', JSON.stringify({ model: OLLAMA_MODEL, prompt: `${system}\n\n${user}`, max_tokens: 200 }).slice(0,1000)) } catch(e) { /* ignore */ }
+  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: OLLAMA_MODEL, prompt: `${system}\n\n${user}`, max_tokens: 200 }) })
       const text = await r.text()
       if (!r.ok) {
-        console.warn('Ollama eval failed', r.status, text.slice(0,200))
+        try { console.warn('Ollama eval failed', { status: r.status, body: String(text).slice(0,200) }) } catch(e) { console.warn('Ollama eval failed', r.status) }
       } else {
+        try { console.debug('Ollama raw response (truncated):', String(text).slice(0,2000)) } catch(e) { /* ignore */ }
         try {
           const parsed = JSON.parse(text)
           // Ollama responses may be raw JSON or contain results[0].content
@@ -300,6 +330,8 @@ try {
     if (publicQuestion.payload && typeof publicQuestion.payload === 'object') {
       publicQuestion.payload = { ...publicQuestion.payload }
       if (typeof publicQuestion.payload.correctAnswer !== 'undefined') delete publicQuestion.payload.correctAnswer
+      // Copy duration to top-level for student view
+      if (typeof publicQuestion.payload.duration !== 'undefined') publicQuestion.duration = publicQuestion.payload.duration
     }
   // debug: log what we are broadcasting so we can confirm options/payload shape
   try { console.log('Broadcasting question-launched for class', payload.classId, 'question:', JSON.stringify(publicQuestion)) } catch(e) { console.warn('log broadcast failed', e) }
@@ -310,10 +342,25 @@ try {
     return res.json({ ok: true })
   })
 
+  app.post('/api/evaluate', async (req, res) => {
+    const { question, answer } = req.body || {};
+    if (!question || !answer) {
+      return res.status(400).json({ error: 'Question and answer are required' });
+    }
+    try {
+      const result = await evaluateAnswerWithLLM(question, answer);
+      return res.json(result);
+    } catch (err) {
+      console.error('Evaluation failed', err);
+      return res.status(500).json({ error: 'Evaluation failed' });
+    }
+  });
+
   // Answers: participants submit an answer to a question
   app.post('/api/answers', async (req, res) => {
     const payload = req.body || {}
     if (!payload.classId || !payload.sessionId || !payload.questionId) return res.status(400).json({ error: 'classId, sessionId and questionId required' })
+  try { console.info('HTTP answer submit received', { classId: payload.classId, questionId: payload.questionId, sessionId: payload.sessionId, preview: String(payload.answer).slice(0,200) }) } catch(e) { /* ignore */ }
     try {
       const id = `${payload.classId}:${payload.sessionId}:${payload.questionId}`
       const doc = { id, classId: payload.classId, sessionId: payload.sessionId, questionId: payload.questionId, answer: payload.answer, created_at: new Date() }
@@ -333,6 +380,16 @@ try {
         const agg = { type: 'answers-count', classId: payload.classId, questionId: payload.questionId, total, counts }
         try { broadcast(agg, payload.classId) } catch(e) { console.warn('broadcast answers-count failed', e) }
       } catch(e) { console.warn('compute answers aggregate failed', e) }
+
+      // If this question expects LLM evaluation (open/prompt), do nothing, evaluation is handled by the client
+      try {
+        const active = activeQuestions.get(payload.classId)
+        const questionPayload = (active && active.question && active.question.payload) ? active.question.payload : {}
+        const evalMode = (questionPayload && typeof questionPayload.evaluation === 'string') ? questionPayload.evaluation : 'mcq'
+        if (evalMode === 'open' || evalMode === 'prompt') {
+          // do nothing
+        }
+      } catch(e) { console.warn('submit evaluation logic failed', e) }
 
       return res.json({ ok: true })
     } catch (err) { console.error('answers POST error', err); return res.status(500).json({ ok: false, error: String(err) }) }
@@ -372,7 +429,7 @@ try {
         const payload = (active && active.question && active.question.payload) ? active.question.payload : {}
   // Prefer explicit evaluation mode declared on the question payload.
   // If missing, default to 'mcq' (safe fallback).
-  const evalMode = (payload && typeof payload.evaluation === 'string') ? payload.evaluation : 'mcq'
+  const evalMode = (payload && typeof payload.evaluation === 'string') ? payload.evaluation : ((payload && (payload.source === 'BAD_PROMPTS' || payload.source === 'PROMPTS')) ? 'prompt' : 'mcq')
 
         if (evalMode === 'mcq') {
           // existing single-correct behavior with time decay
@@ -640,14 +697,21 @@ try {
     wss.handleUpgrade(request, socket, head, (ws) => {
       wsClients.add(ws)
       ws.on('close', () => wsClients.delete(ws))
-    ws.on('message', async (msg) => {
-        // debug: log raw incoming message and ws metadata
-        try { console.debug('WS recv raw', { raw: String(msg).slice(0,200), sessionId: ws._sessionId || null, role: ws._role || null }) } catch(e) { /* ignore */ }
+      ws.on('message', async (msg) => {
+        // Attempt to parse message and avoid noisy heartbeat logs (ping/participant-heartbeat)
+        let parsedObj = null
+        try { parsedObj = JSON.parse(String(msg)) } catch (e) { /* keep raw if not json */ }
+        const isHeartbeat = parsedObj && (parsedObj.type === 'ping' || parsedObj.type === 'participant-heartbeat' || parsedObj.type === 'participant-disconnected')
+        if (!isHeartbeat) {
+          try { console.debug('WS recv raw', { raw: String(msg).slice(0,200), sessionId: ws._sessionId || null, role: ws._role || null }) } catch(e) { /* ignore */ }
+          try { console.debug('WS recv parsed preview', String(msg).slice(0,1000)) } catch(e) { /* ignore */ }
+        }
         // allow clients to send pings or subscribe messages if needed
         try {
-          try { console.debug('WS recv parsed preview', String(msg).slice(0,1000)) } catch(e) { /* ignore */ }
-          const obj = JSON.parse(String(msg))
-          try { console.debug('WS recv obj', { type: obj && obj.type, classId: obj && obj.classId, sessionId: obj && obj.sessionId }) } catch(e) { /* ignore */ }
+          const obj = parsedObj || JSON.parse(String(msg))
+          if (!isHeartbeat) {
+            try { console.debug('WS recv obj', { type: obj && obj.type, classId: obj && obj.classId, sessionId: obj && obj.sessionId }) } catch(e) { /* ignore */ }
+          }
       if (obj && obj.type === 'subscribe' && obj.classId) {
             const cid = obj.classId
             // If client provided a sessionId, associate it with this ws so we can detect disconnects
@@ -737,6 +801,69 @@ try {
             } catch (e) { console.warn('ping handling failed', e) }
             return
           }
+
+          // allow students to submit answers over WS (mirror of POST /api/answers)
+          if (obj && obj.type === 'answer' && obj.classId && obj.sessionId && obj.questionId) {
+            try {
+                const payload = obj || {}
+                try { console.info('WS answer submit received', { classId: payload.classId, questionId: payload.questionId, sessionId: payload.sessionId, preview: String(payload.answer).slice(0,200) }) } catch(e) { /* ignore */ }
+              const id = `${payload.classId}:${payload.sessionId}:${payload.questionId}`
+              const doc = { id, classId: payload.classId, sessionId: payload.sessionId, questionId: payload.questionId, answer: payload.answer, created_at: new Date() }
+              try { await answers.replaceOne({ id }, doc, { upsert: true }) } catch(e) { console.error('answers WS replaceOne failed', e) }
+              // broadcast answers-updated for this class/question (raw answer)
+              try { broadcast({ type: 'answers-updated', classId: payload.classId, questionId: payload.questionId, answer: doc }, payload.classId) } catch(e) { console.warn('broadcast answers-updated failed (ws answer)', e) }
+              // compute aggregate counts for this question in this class and broadcast answers-count
+              try {
+                const docs = await answers.find({ classId: payload.classId, questionId: payload.questionId }).toArray()
+                const counts = {}
+                for (const a of docs) {
+                  const key = a.answer == null ? '' : String(a.answer)
+                  counts[key] = (counts[key] || 0) + 1
+                }
+                const total = Object.values(counts).reduce((s,v)=>s+v,0)
+                const agg = { type: 'answers-count', classId: payload.classId, questionId: payload.questionId, total, counts }
+                try { broadcast(agg, payload.classId) } catch(e) { console.warn('broadcast answers-count failed (ws answer)', e) }
+              } catch(e) { console.warn('compute answers aggregate failed (ws answer)', e) }
+              // Evaluate immediately for open/prompt questions; allow client-provided evaluation
+              try {
+                const active = activeQuestions.get(payload.classId)
+                const totalDurationSec = (active && active.question && Number(active.question.duration)) ? Number(active.question.duration) : 30
+                const questionPayload = (active && active.question && active.question.payload) ? active.question.payload : {}
+                const evalMode = (questionPayload && typeof questionPayload.evaluation === 'string') ? questionPayload.evaluation : 'mcq'
+                if (evalMode === 'open' || evalMode === 'prompt') {
+                  try {
+                    if (payload.evaluation && typeof payload.evaluation.score === 'number') {
+                      const scoreFraction = Math.max(0, Math.min(1, Number(payload.evaluation.score)))
+                      const feedback = payload.evaluation.feedback || ''
+                      const answerTs = doc.created_at ? (new Date(doc.created_at)).getTime() : Date.now()
+                      const startedAt = (active && active.startedAt) ? active.startedAt : (answerTs - (totalDurationSec * 1000))
+                      const timeTakenMs = Math.max(0, answerTs - startedAt)
+                      const percent = Math.min(1, timeTakenMs / (totalDurationSec * 1000))
+                      const points = (questionPayload && Number(questionPayload.points)) ? Number(questionPayload.points) : 100
+                      const awarded = Math.round((Number(points) || 0) * scoreFraction * Math.max(0, 1 - percent))
+                      if (awarded > 0) await participants.updateOne({ classId: payload.classId, sessionId: payload.sessionId }, { $inc: { score: awarded }, $set: { lastSeen: new Date() } }, { upsert: true })
+                      try { await answers.replaceOne({ id }, { ...doc, evaluation: { score: scoreFraction, feedback, awardedPoints: awarded, evaluatedAt: new Date(), source: 'client' } }, { upsert: true }) } catch(e) { console.warn('attach client evaluation to answer failed (ws)', e) }
+                      try { broadcast({ type: 'answer-evaluated', classId: payload.classId, questionId: payload.questionId, sessionId: payload.sessionId, score: scoreFraction, feedback, awardedPoints: awarded, source: 'client' }, payload.classId) } catch(e) { console.warn('broadcast answer-evaluated failed (ws)', e) }
+                    } else {
+                      const answerText = Array.isArray(payload.answer) ? payload.answer.join(', ') : String(payload.answer || '')
+                      const evalRes = await evaluateAnswerWithLLM(questionPayload, answerText)
+                      const scoreFraction = typeof evalRes.score === 'number' ? Math.max(0, Math.min(1, evalRes.score)) : 0
+                      const answerTs = doc.created_at ? (new Date(doc.created_at)).getTime() : Date.now()
+                      const startedAt = (active && active.startedAt) ? active.startedAt : (answerTs - (totalDurationSec * 1000))
+                      const timeTakenMs = Math.max(0, answerTs - startedAt)
+                      const percent = Math.min(1, timeTakenMs / (totalDurationSec * 1000))
+                      const points = (questionPayload && Number(questionPayload.points)) ? Number(questionPayload.points) : 100
+                      const awarded = Math.round((Number(points) || 0) * scoreFraction * Math.max(0, 1 - percent))
+                      if (awarded > 0) await participants.updateOne({ classId: payload.classId, sessionId: payload.sessionId }, { $inc: { score: awarded }, $set: { lastSeen: new Date() } }, { upsert: true })
+                      try { await answers.replaceOne({ id }, { ...doc, evaluation: { score: scoreFraction, feedback: evalRes.feedback || '', awardedPoints: awarded, evaluatedAt: new Date(), source: 'server' } }, { upsert: true }) } catch(e) { console.warn('attach evaluation to answer failed (ws)', e) }
+                      try { broadcast({ type: 'answer-evaluated', classId: payload.classId, questionId: payload.questionId, sessionId: payload.sessionId, score: scoreFraction, feedback: evalRes.feedback || '', awardedPoints: awarded, source: 'server' }, payload.classId) } catch(e) { console.warn('broadcast answer-evaluated failed (ws)', e) }
+                    }
+                  } catch(e) { console.error('LLM evaluation at submit (ws) failed', e) }
+                }
+              } catch(e) { console.warn('ws submit evaluation logic failed', e) }
+            } catch (err) { console.error('answers WS handling error', err) }
+            return
+          }
           // ignore other messages for now
           // allow explicit unsubscribe so clients can leave a class without closing the socket
           if (obj && obj.type === 'unsubscribe' && obj.classId) {
@@ -792,7 +919,7 @@ try {
                 const totalDurationSec = (active && active.question && Number(active.question.duration)) ? Number(active.question.duration) : 30
                 const payload = (active && active.question && active.question.payload) ? active.question.payload : {}
                 // Prefer explicit evaluation mode declared on the question payload; fallback to 'mcq'
-                const evalMode = (payload && typeof payload.evaluation === 'string') ? payload.evaluation : 'mcq'
+                const evalMode = (payload && typeof payload.evaluation === 'string') ? payload.evaluation : ((payload && (payload.source === 'BAD_PROMPTS' || payload.source === 'PROMPTS')) ? 'prompt' : 'mcq')
 
                 if (evalMode === 'mcq') {
                   for (const a of docs) {

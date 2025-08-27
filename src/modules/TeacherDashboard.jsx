@@ -313,7 +313,7 @@ export default function TeacherDashboard({ onClose }) {
         const buildBlock = (id, name, items, mapper) => ({ id, name, questions: items.map(mapper) })
         const verifMapper = (v, idx) => ({ id: `q-verif-${idx}-${Date.now()}`, title: v.q, duration: 30, options: Array.isArray(v.options) ? v.options.slice() : [], payload: { source: 'VERIF_QUIZ', explain: v.explain, correctAnswer: (Array.isArray(v.options) && typeof v.a !== 'undefined') ? v.options[v.a] : null } })
         const ethicsMapper = (e, idx) => ({ id: `q-eth-${idx}-${Date.now()}`, title: e.text, duration: 30, options: ['No es correcto','Es correcto'], payload: { source: 'ETHICS_SCENARIOS', why: e.why, correctAnswer: e.good ? 'Es correcto' : 'No es correcto' } })
-        const badMapper = (b, idx) => ({ id: `q-bad-${idx}-${Date.now()}`, title: b.bad, duration: 25, options: [], payload: { source: 'BAD_PROMPTS', tip: b.tip } })
+  const badMapper = (b, idx) => ({ id: `q-bad-${idx}-${Date.now()}`, title: b.bad, duration: 25, options: [], payload: { source: 'BAD_PROMPTS', tip: b.tip, evaluation: 'prompt' } })
         meta.blocks = [
           buildBlock('ETHICS', 'Escenarios éticos', ETHICS_SCENARIOS, ethicsMapper),
           buildBlock('VERIF', 'Verificación', VERIF_QUIZ, verifMapper),
@@ -432,7 +432,7 @@ export default function TeacherDashboard({ onClose }) {
         const buildBlock = (id, name, items, mapper) => ({ id, name, questions: items.map(mapper) })
         const verifMapper = (v, idx) => ({ id: `q-verif-${idx}-${Date.now()}`, title: v.q, duration: v.duration || 30, options: Array.isArray(v.options) ? v.options.slice() : [], payload: { source: 'VERIF_QUIZ', explain: v.explain, correctAnswer: (Array.isArray(v.options) && typeof v.a !== 'undefined') ? v.options[v.a] : null } })
         const ethicsMapper = (e, idx) => ({ id: `q-eth-${idx}-${Date.now()}`, title: e.text, duration: e.duration || 30, options: ['No es correcto','Es correcto'], payload: { source: 'ETHICS_SCENARIOS', why: e.why, correctAnswer: e.good ? 'Es correcto' : 'No es correcto' } })
-        const badMapper = (b, idx) => ({ id: `q-bad-${idx}-${Date.now()}`, title: b.bad, duration: b.duration || 30, options: [], payload: { source: 'BAD_PROMPTS', tip: b.tip } })
+  const badMapper = (b, idx) => ({ id: `q-bad-${idx}-${Date.now()}`, title: b.bad, duration: b.duration || 30, options: [], payload: { source: 'BAD_PROMPTS', tip: b.tip, evaluation: 'prompt' } })
         meta.blocks = [
           buildBlock('ETHICS', 'Escenarios éticos', ETHICS_SCENARIOS, ethicsMapper),
           buildBlock('VERIF', 'Verificación', VERIF_QUIZ, verifMapper),

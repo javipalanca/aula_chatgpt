@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useCallback } from 'react'
 import { initRealtime, subscribeToClass, unsubscribeFromClass, joinClass, submitAnswer, getSessionId, listClassParticipants } from '../lib/storage'
 import { startHeartbeat, stopHeartbeat, leaveClass } from '../lib/storage'
 import { Button, clsx } from '../components/ui'
 import { Bar } from 'react-chartjs-2'
 import { Chart as ChartJS, BarElement, CategoryScale, LinearScale, Tooltip, Legend } from 'chart.js'
+import ChatGPT from '../components/ChatGPT';
 ChartJS.register(BarElement, CategoryScale, LinearScale, Tooltip, Legend)
 
 export default function StudentView({ classCode, displayName, onBack }) {
@@ -14,6 +15,9 @@ export default function StudentView({ classCode, displayName, onBack }) {
   const [answersCount, setAnswersCount] = useState(0)
   const [score, setScore] = useState(0)
   const [userAnswer, setUserAnswer] = useState(null)
+  const [promptText, setPromptText] = useState('')
+  const [submittedPrompt, setSubmittedPrompt] = useState(null)
+  const [promptSubmitted, setPromptSubmitted] = useState(false)
   const [correctAnswer, setCorrectAnswer] = useState(null)
   const [participants, setParticipants] = useState([])
   const [showScoresOverlay, setShowScoresOverlay] = useState(false)
@@ -42,11 +46,14 @@ export default function StudentView({ classCode, displayName, onBack }) {
       if (d.classId !== classCode) return
       if (d.type === 'question-launched') {
         setCurrentQuestion(d.question)
-        setSecondsLeft(d.question.duration || 30)
+        setSecondsLeft(d.question.payload && typeof d.question.payload.duration === 'number' ? d.question.payload.duration : 30)
         setHasAnswered(false)
   // distribution handled on teacher side; reset local counters
         setAnswersCount(0)
         setUserAnswer(null)
+        setPromptText('')
+        setSubmittedPrompt(null)
+        setPromptSubmitted(false)
         setCorrectAnswer(null)
       }
       if (d.type === 'answers-count' && d.questionId === (currentQuestion && currentQuestion.id)) {
@@ -54,7 +61,7 @@ export default function StudentView({ classCode, displayName, onBack }) {
       }
       if (d.type === 'question-results') {
   // Log for debugging
-  try { console.debug('StudentView question-results received', { questionId: d.questionId, currentQuestionId: currentQuestion && currentQuestion.id }) } catch(e) { /* ignore */ }
+  try { console.debug('StudentView question-results received', { questionId: d.questionId, currentQuestionId: currentQuestion && currentQuestion.id, raw: d }) } catch(e) { /* ignore */ }
   // If it's for the current question, or if for any reason questionId doesn't match but class-level reveal arrived,
   // stop the timer and show results as a safe fallback.
   if (!currentQuestion || d.questionId === (currentQuestion && currentQuestion.id) || d.classId === classCode) {
@@ -68,7 +75,20 @@ export default function StudentView({ classCode, displayName, onBack }) {
       const me = d.updatedScores.find(s => s.sessionId === getSessionId())
       if (me) setScore(me.score || 0)
     }
+    // If evaluations were included (open/prompt), do nothing, handled by ChatGPT component
+    try {
+      // Some broadcasts include answers/evaluations in different shapes
+      // Stop any pending indicators when results arrive
+  console.info('Evaluation completed or revealed for question', d.questionId)
+    } catch (e) { /* ignore */ }
   }
+      }
+      if (d.type === 'participants-updated') {
+        try { setParticipants(d.participants || []) } catch(e) { /* ignore */ }
+        try {
+          const me = (d.participants || []).find(p => p.sessionId === getSessionId())
+          if (me) setScore(me.score || 0)
+        } catch (e) { /* ignore */ }
       }
     }
 
@@ -114,6 +134,8 @@ export default function StudentView({ classCode, displayName, onBack }) {
     })()
   }, [secondsLeft, currentQuestion])
 
+  
+
   async function handleAnswer(ans) {
     if (!currentQuestion || hasAnswered) return
     setUserAnswer(ans)
@@ -122,6 +144,38 @@ export default function StudentView({ classCode, displayName, onBack }) {
       setHasAnswered(true)
     } catch (e) { console.warn('submitAnswer failed', e) }
   }
+
+  async function handleSubmitPrompt() {
+    if (!currentQuestion || hasAnswered) return
+    const text = String(promptText || '').trim()
+    if (!text) return
+    try {
+      await submitAnswer(classCode, getSessionId(), currentQuestion.id, text)
+      setSubmittedPrompt(text)
+      setHasAnswered(true)
+      setPromptSubmitted(true)
+    } catch (e) { console.warn('submitPrompt failed', e) }
+  }
+
+  const handleEvaluation = useCallback((evaluation) => {
+    // Award points based on the evaluation score
+    const score = Math.max(1, Math.min(100, Number(evaluation.score)))
+    const points = (currentQuestion.payload && Number(currentQuestion.payload.points)) ? Number(currentQuestion.payload.points) : 100
+    const awarded = Math.round((Number(points) || 0) * (score / 100))
+    if (awarded > 0) {
+      // Update the local score
+      setScore(s => s + awarded)
+      // Persist the score update to the backend
+      try {
+        fetch(`/api/participants`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: getSessionId(), classId: classCode, scoreDelta: awarded })
+        })
+      } catch (e) { console.warn('score update failed', e) }
+    }
+  }, [currentQuestion, classCode]);
 
   return (
   <div className="min-h-screen flex items-center justify-center bg-black text-white p-6">
@@ -179,6 +233,55 @@ export default function StudentView({ classCode, displayName, onBack }) {
                     </button>
                   )
                 })}
+              </div>
+            )}
+            {/* Open / prompt evaluation: free-text ChatGPT-like input */}
+            {(!currentQuestion.options || currentQuestion.options.length===0) && currentQuestion.payload && ((currentQuestion.payload.evaluation === 'open' || currentQuestion.payload.evaluation === 'prompt') || (currentQuestion.payload.source === 'BAD_PROMPTS' || currentQuestion.payload.source === 'PROMPTS')) && (
+              <div className="mb-6">
+                {/* Instructions box: use explicit instructions from payload if present, otherwise show default template */}
+                <div className="mb-3 p-3 rounded border border-slate-700 bg-white/5 text-left">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <div className="text-sm font-semibold">Instrucciones para esta pregunta</div>
+                      {/* Preface specifically for BAD_PROMPTS / PROMPTS */}
+                      { currentQuestion.payload && (currentQuestion.payload.source === 'BAD_PROMPTS' || currentQuestion.payload.source === 'PROMPTS') ? (
+                        <div className="text-xs opacity-85 mt-1 mb-2">Completa el prompt para formular una petición clara y útil. ¡Lo que escribas abajo será tu <i>prompt</i> final!</div>
+                      ) : null }
+                      <div className="text-xs opacity-75 mt-1">
+                        { (currentQuestion.payload && (currentQuestion.payload.instructions || currentQuestion.payload.tip)) ? (
+                          <span>{currentQuestion.payload.instructions || currentQuestion.payload.tip}</span>
+                        ) : (
+                          <span>Redacta un prompt claro incluyendo: rol (quién debe responder), objetivo (qué quieres obtener), contexto breve, formato de salida (lista, esquema, ejemplos) y restricciones (longitud, lenguaje).</span>
+                        ) }
+                      </div>
+                    </div>
+                    <div className="ml-3">
+                      <button className="text-sm px-2 py-1 rounded bg-slate-700/30 hover:bg-slate-700/40" onClick={() => {
+                        const tpl = (currentQuestion.payload && (currentQuestion.payload.template || currentQuestion.payload.instructions)) ? (currentQuestion.payload.template || currentQuestion.payload.instructions) : `Actúa como un experto en la materia. Resume brevemente el contexto, responde con claridad y entrega un ejemplo al final. Formato: 1) Resumen, 2) Puntos clave, 3) Ejemplo.`
+                        try { navigator.clipboard.writeText(tpl) } catch(e) { /* ignore */ }
+                        // also prefill textarea for convenience
+                        setPromptText(tpl)
+                      }}>Copiar plantilla</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="text-left mb-2 text-sm opacity-70">Respuesta (puedes escribir un prompt completo):</div>
+                <textarea value={promptText} onChange={e => setPromptText(e.target.value)} rows={6} className="w-full p-3 rounded bg-white/5 text-white mb-2" placeholder="Escribe tu respuesta o prompt aqui..." />
+                <div className="flex gap-2 justify-center">
+                  <Button onClick={handleSubmitPrompt} disabled={hasAnswered || !promptText.trim()}>Enviar</Button>
+                  <Button variant="ghost" onClick={() => { setPromptText('') }} disabled={hasAnswered}>Borrar</Button>
+                </div>
+                {submittedPrompt && (
+                  <div className="mt-3 text-sm opacity-70 text-left">Tu envío: <div className="mt-1 p-2 rounded bg-white/5">{submittedPrompt}</div></div>
+                )}
+                {promptSubmitted && (
+                  <ChatGPT
+                    question={currentQuestion}
+                    answer={submittedPrompt}
+                    onEvaluated={handleEvaluation}
+                  />
+                )}
               </div>
             )}
             <div className="text-2xl font-mono mb-2">{secondsLeft}s</div>

@@ -20,14 +20,14 @@ export const VERIF_QUIZ = [
 ];
 
 export const BAD_PROMPTS = [
-  { id: 1, bad: "Explícame historia", tip: "Sé concreto: tema, curso/edad, extensión, formato (lista, esquema), ejemplos y tono.", evaluation: 'prompt', duration: 120 },
-  { id: 2, bad: "Haz mi comentario de texto de La casa de Bernarda Alba", tip: "Pide guía: estructura, preguntas para reflexionar, vocabulario, y escribe tu versión.", evaluation: 'prompt', duration: 150 },
+  { id: 1, bad: "Explícame historia", tip: "Sé concreto: tema, curso/edad, extensión, formato (lista, esquema), ejemplos y tono.", evaluation: 'prompt', duration: 180 },
+  { id: 2, bad: "Haz mi comentario de texto de La casa de Bernarda Alba", tip: "Pide guía: estructura, preguntas para reflexionar, vocabulario, y escribe tu versión.", evaluation: 'prompt', duration: 180 },
   { id: 3, bad: "Dame un trabajo de 10 páginas sobre la fotosíntesis", tip: "Divide: índice propuesto + resumen por apartados + fuentes para ampliar.", evaluation: 'prompt', duration: 180 },
 ];
 
-export const RED_FLAGS_SAMPLE = {
+export const RED_FLAGS_SAMPLE = [{
   answer: "La Revolución de los Pingüinos empezó en 1789 en Francia, cuando los pingüinos derrocaron a Luis XVI. Según el Instituto Francés de Pingüinología, hubo 123 castillos de hielo tomados por asalto. Todo terminó con el Tratado de Hielo de 1795 firmado en la Antártida.",
   checks: [ { id: 'hechos', label: 'Hay datos que requieren verificación externa' }, { id: 'inventado', label: 'Detecto elementos inventados o absurdos' }, { id: 'fuentes', label: 'Faltan fuentes reales o enlaces comprobables' }, { id: 'tono', label: 'El tono no es adecuado para un trabajo escolar' }, { id: 'privacidad', label: 'Incluye datos personales innecesarios' } ],
   correct: ['hechos','inventado','fuentes','tono'],
   evaluation: 'redflags'
-}
+}];
