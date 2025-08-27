@@ -57,19 +57,7 @@ export default function ChatGPT({ question, answer, onEvaluated }) {
     );
   }
 
-  return (
-    <div className="mt-3 text-left">
-      <div className="space-y-3">
-        <div className="max-w-[80%] p-3 rounded-lg bg-white/10 text-left self-start">
-          <div className="text-sm opacity-80">Tu entrada</div>
-          <div className="mt-1">{answer}</div>
-        </div>
-        <div className="max-w-[80%] p-3 rounded-lg bg-slate-800 text-left self-end ml-auto" style={{ background: 'linear-gradient(180deg,#0f172a,#111827)' }}>
-          <div className="text-sm opacity-80">Evaluación automática — {Math.round(evaluation.score || 0)}/100</div>
-          {evaluation.awardedPoints ? <div className="text-sm opacity-80">Puntos: {evaluation.awardedPoints}</div> : null}
-          <div className="mt-2">{evaluation.feedback}</div>
-        </div>
-      </div>
-    </div>
-  );
+  return null;
+
 }
+

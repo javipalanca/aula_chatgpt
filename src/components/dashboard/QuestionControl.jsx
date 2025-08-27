@@ -86,7 +86,7 @@ export function QuestionControl({
             Finalizar Juego
           </Button>
         )}
-        <Button onClick={onReveal} variant="ghost">Revelar</Button>
+    <Button onClick={() => onReveal()} variant="ghost">Revelar</Button>
         <Button onClick={onShowScores} variant="ghost">Mostrar puntuación</Button>
       </div>
 

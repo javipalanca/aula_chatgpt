@@ -99,9 +99,8 @@ export default function TeacherDashboard({ onClose }) {
   }, [selected])
 
   useEffect(()=>{
-    if (lastQuestionResults) {
-      setShowScoresOverlay(true)
-    }
+  // Do not auto-open the scores overlay when results arrive; require teacher to press "Mostrar puntuación"
+  // This prevents revealing scores immediately on reveal and gives teacher control.
   }, [lastQuestionResults])
 
   useEffect(()=>{
@@ -205,10 +204,34 @@ export default function TeacherDashboard({ onClose }) {
     const correct = preferred || prompt('Respuesta correcta (texto exacto)')
     if (!correct) return
     try {
-      const res = await revealQuestion(selected, questionRunning.id, correct)
-      setLastQuestionResults(res)
-      setSelectedCorrect(correct)
-      toast('Resultados mostrados')
+      try {
+        const res = await revealQuestion(selected, questionRunning.id, correct)
+        setLastQuestionResults(res)
+        setSelectedCorrect(correct)
+        toast('Resultados mostrados')
+        return
+      } catch (err) {
+        console.warn('revealQuestion (WS) failed, attempting HTTP fallback', err)
+        // continue to HTTP fallback
+      }
+
+      // HTTP fallback: call the reveal endpoint directly
+      try {
+        const r = await fetch(`/api/questions/${encodeURIComponent(questionRunning.id)}/reveal`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ classId: selected, correctAnswer: correct, points: (questionRunning.payload && questionRunning.payload.points) ? Number(questionRunning.payload.points) : 100 })
+        })
+        if (!r.ok) throw new Error('HTTP reveal failed: ' + r.status)
+        const json = await r.json()
+        setLastQuestionResults(json)
+        setSelectedCorrect(correct)
+        toast('Resultados mostrados (fallback HTTP)')
+        return
+      } catch (httpErr) {
+        console.error('HTTP reveal fallback failed', httpErr)
+        toast('Error mostrando resultados: ' + (httpErr && httpErr.message ? httpErr.message : String(httpErr)))
+      }
     } catch (e) { toast('Error mostrando resultados: ' + (e.message || e)) }
   }
 

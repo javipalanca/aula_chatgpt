@@ -18,6 +18,7 @@ export default function StudentView({ classCode, displayName, onBack }) {
   const [promptText, setPromptText] = useState('')
   const [submittedPrompt, setSubmittedPrompt] = useState(null)
   const [promptSubmitted, setPromptSubmitted] = useState(false)
+  const [displayedEvaluationResult, setDisplayedEvaluationResult] = useState(null);
   const [correctAnswer, setCorrectAnswer] = useState(null)
   const [participants, setParticipants] = useState([])
   const [showScoresOverlay, setShowScoresOverlay] = useState(false)
@@ -81,12 +82,11 @@ export default function StudentView({ classCode, displayName, onBack }) {
             const me = d.updatedScores.find(s => s.sessionId === getSessionId())
             if (me) setScore(me.score || 0)
           }
-          // If evaluations were included (open/prompt), do nothing, handled by ChatGPT component
-          try {
-            // Some broadcasts include answers/evaluations in different shapes
-            // Stop any pending indicators when results arrive
-            console.info('Evaluation completed or revealed for question', d.questionId)
-          } catch (e) { /* ignore */ }
+          // If evaluations were included (open/prompt), display them
+          if (Array.isArray(d.evaluations)) {
+            const mine = d.evaluations.find(x => x.sessionId === getSessionId())
+            if (mine) { setDisplayedEvaluationResult(mine); console.info('My evaluation:', mine) }
+          }
         }
       }
       if (d.type === 'participants-updated') {
@@ -184,6 +184,7 @@ export default function StudentView({ classCode, displayName, onBack }) {
         })
       } catch (e) { console.warn('score update failed', e) }
     }
+    setDisplayedEvaluationResult({ score, feedback: evaluation.feedback, awardedPoints: awarded });
   }, [currentQuestion, classCode]);
 
   return (
@@ -284,12 +285,25 @@ export default function StudentView({ classCode, displayName, onBack }) {
                 {submittedPrompt && (
                   <div className="mt-3 text-sm opacity-70 text-left">Tu envío: <div className="mt-1 p-2 rounded bg-white/5">{submittedPrompt}</div></div>
                 )}
-                {promptSubmitted && (
-                  <ChatGPT
-                    question={currentQuestion}
-                    answer={submittedPrompt}
-                    onEvaluated={handleEvaluation}
-                  />
+                {displayedEvaluationResult && (
+                  <div className="mt-3 text-left">
+                    <div className="space-y-3">
+                      <div className="max-w-[80%] p-3 rounded-lg bg-white/10 text-left self-start">
+                        <div className="text-sm opacity-80">Tu entrada</div>
+                        <div className="mt-1">{submittedPrompt || promptText}</div>
+                      </div>
+                      <div className="max-w-[80%] p-3 rounded-lg bg-slate-800 text-left self-end ml-auto" style={{ background: 'linear-gradient(180deg,#0f172a,#111827)' }}>
+                        <div className="text-sm opacity-80">Evaluación automática — {Math.round(displayedEvaluationResult.score || 0)}/100</div>
+                        {displayedEvaluationResult.awardedPoints ? <div className="text-sm opacity-80">Puntos: {displayedEvaluationResult.awardedPoints}</div> : null}
+                        <div className="mt-2">{displayedEvaluationResult.feedback}</div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {correctAnswer && (
+                  <div className="mt-3 text-sm opacity-70 text-left">
+                    Respuesta correcta: <div className="mt-1 p-2 rounded bg-green-600 text-white">{correctAnswer}</div>
+                  </div>
                 )}
               </div>
             )}
