@@ -221,6 +221,7 @@ try {
   // Classes
   app.get('/api/classes', async (req, res) => {
     const docs = await classes.find({}).toArray()
+    console.log('GET /api/classes docs:', docs);
     return res.json(docs)
   })
   app.get('/api/classes/:id', async (req,res) => {
@@ -239,6 +240,7 @@ try {
   app.patch('/api/classes/:id', async (req, res) => {
     const id = req.params.id
     const updates = req.body || {}
+    console.log('PATCH /api/classes/:id updates:', updates);
     try {
       await classes.updateOne({ id }, { $set: updates })
       const doc = await classes.findOne({ id })
@@ -335,9 +337,24 @@ try {
   })
   app.post('/api/challenges', async (req, res) => {
     const payload = req.body || {}
-    if (!payload.id) payload.id = `c-${Date.now()}`
+    // Normalize game-end markers so multiple clients/flows don't create
+    // many duplicate "Juego terminado" documents. If this payload looks
+    // like a game-ended marker, assign a stable id per class and ensure
+    // a sensible duration (default 0 to avoid timer behavior).
+    const looksLikeGameEnd = (payload && ((payload.payload && payload.payload.type === 'game-ended') || (typeof payload.title === 'string' && /juego terminado/i.test(payload.title))))
+    if (looksLikeGameEnd) {
+      // require classId to build stable id; fall back to prefix if missing
+      const cls = payload.classId || 'unknown'
+      payload.id = `${cls}:game-ended`
+      // avoid accidental short timers for game-end markers
+      if (typeof payload.duration !== 'number') payload.duration = 0
+      payload.payload = payload.payload || {}
+      payload.payload.type = 'game-ended'
+    } else {
+      if (!payload.id) payload.id = `c-${Date.now()}`
+    }
     payload.created_at = new Date()
-  await challenges.replaceOne({ id: payload.id }, payload, { upsert: true })
+    await challenges.replaceOne({ id: payload.id }, payload, { upsert: true })
   // broadcast question launched (kahoot mode)
     try {
     // do not leak the correctAnswer in payload to students on launch

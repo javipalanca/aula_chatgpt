@@ -20,9 +20,9 @@ export const VERIF_QUIZ = [
 ];
 
 export const BAD_PROMPTS = [
-  { id: 1, bad: "Explícame historia", tip: "Sé concreto: tema, curso/edad, extensión, formato (lista, esquema), ejemplos y tono.", evaluation: 'prompt', duration: 180 },
-  { id: 2, bad: "Haz mi comentario de texto de La casa de Bernarda Alba", tip: "Pide guía: estructura, preguntas para reflexionar, vocabulario, y escribe tu versión.", evaluation: 'prompt', duration: 180 },
-  { id: 3, bad: "Dame un trabajo de 10 páginas sobre la fotosíntesis", tip: "Divide: índice propuesto + resumen por apartados + fuentes para ampliar.", evaluation: 'prompt', duration: 180 },
+  { id: 1, bad: "Explícame historia", tip: "Sé concreto: tema, curso/edad, extensión, formato (lista, esquema), ejemplos y tono.", evaluation: 'prompt', duration: 160 },
+  { id: 2, bad: "Haz mi comentario de texto de La casa de Bernarda Alba", tip: "Pide guía: estructura, preguntas para reflexionar, vocabulario, y escribe tu versión.", evaluation: 'prompt', duration: 160 },
+  { id: 3, bad: "Dame un trabajo de 10 páginas sobre la fotosíntesis", tip: "Divide: índice propuesto + resumen por apartados + fuentes para ampliar.", evaluation: 'prompt', duration: 160 },
 ];
 
 export const RED_FLAGS_SAMPLE = [{

@@ -365,9 +365,12 @@ export default function TeacherDashboard({ onClose }) {
       const meta = cls.meta || {}
       if (!meta.blocks) {
         const buildBlock = (id, name, items, mapper) => ({ id, name, questions: items.map(mapper) })
-        const verifMapper = (v, idx) => ({ id: `q-verif-${idx}-${Date.now()}`, title: v.q, duration: 30, options: Array.isArray(v.options) ? v.options.slice() : [], payload: { source: 'VERIF_QUIZ', explain: v.explain, correctAnswer: (Array.isArray(v.options) && typeof v.a !== 'undefined') ? v.options[v.a] : null } })
-        const ethicsMapper = (e, idx) => ({ id: `q-eth-${idx}-${Date.now()}`, title: e.text, duration: 30, options: ['No es correcto','Es correcto'], payload: { source: 'ETHICS_SCENARIOS', why: e.why, correctAnswer: e.good ? 'Es correcto' : 'No es correcto' } })
-        const badMapper = (b, idx) => ({ id: `q-bad-${idx}-${Date.now()}`, title: b.bad, duration: 25, options: [], payload: { source: 'BAD_PROMPTS', tip: b.tip, evaluation: 'prompt' } })
+        const verifMapper = (v, idx) => ({ id: `q-verif-${idx}-${Date.now()}`, title: v.q, duration: v.duration || 30, options: Array.isArray(v.options) ? v.options.slice() : [], payload: { source: 'VERIF_QUIZ', explain: v.explain, correctAnswer: (Array.isArray(v.options) && typeof v.a !== 'undefined') ? v.options[v.a] : null } })
+        const ethicsMapper = (e, idx) => ({ id: `q-eth-${idx}-${Date.now()}`, title: e.text, duration: e.duration || 30, options: ['No es correcto','Es correcto'], payload: { source: 'ETHICS_SCENARIOS', why: e.why, correctAnswer: e.good ? 'Es correcto' : 'No es correcto' } })
+  const badMapper = (b, idx) => {
+    console.log('badMapper: b.duration', b.duration, 'resulting duration', b.duration || 180);
+    return { id: `q-bad-${idx}-${Date.now()}`, title: b.bad, duration: b.duration || 180, options: [], payload: { source: 'BAD_PROMPTS', tip: b.tip, evaluation: 'prompt' } }
+  }
         meta.blocks = [
           buildBlock('ETHICS', 'Escenarios éticos', ETHICS_SCENARIOS, ethicsMapper),
           buildBlock('VERIF', 'Verificación', VERIF_QUIZ, verifMapper),
@@ -411,7 +414,7 @@ export default function TeacherDashboard({ onClose }) {
 
       const payload = { ...(questionToLaunch.payload || {}), blockId: block.id, blockName: block.name, blockIndex: currentBlockIndex, questionIndex: currentQuestionIndex }
       const options = Array.isArray(questionToLaunch.options) ? questionToLaunch.options : []
-      const qPayload = { id: questionToLaunch.id || `q-${Date.now()}`, title: questionToLaunch.title, options, duration: questionToLaunch.duration || 30, payload }
+            const qPayload = { id: questionToLaunch.id || `q-${Date.now()}`, title: questionToLaunch.title, options, duration: questionToLaunch.duration, payload }
 
       // Launch the current question
       const q = await createQuestion(selected, qPayload)

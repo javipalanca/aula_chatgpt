@@ -501,7 +501,7 @@ export function initRealtime(baseUrl) {
       } catch (e) { console.warn('subscribeToClass failed', e); return false }
   }
 
-export async function createQuestion(code, { id = `q-${Date.now()}`, title = 'Pregunta', options = [], duration = 30, payload = {} } = {}) {
+export async function createQuestion(code, { id = `q-${Date.now()}`, title = 'Pregunta', options = [], duration, payload = {} } = {}) {
   if (!USE_API) throw new Error('createQuestion requires VITE_STORAGE_API')
   const q = { id, title, options, duration, payload, created_at: Date.now(), classId: code }
   const r = await fetch(`${API_BASE}/api/challenges`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(q) })
