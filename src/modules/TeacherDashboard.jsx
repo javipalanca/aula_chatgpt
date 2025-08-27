@@ -198,8 +198,10 @@ export default function TeacherDashboard({ onClose }) {
 
   async function handleRevealAction(preferredAnswer = null) {
     if (!questionRunning) return toast('No hay pregunta activa')
-    setTimerRunning(false)
-    setSecondsLeft(0)
+  setTimerRunning(false)
+  // If this reveal is for the special end-of-game marker, keep the displayed secondsLeft
+  const isGameEnd = questionRunning && questionRunning.payload && questionRunning.payload.type === 'game-ended'
+  if (!isGameEnd) setSecondsLeft(0)
     const preferred = preferredAnswer || questionRunning?.payload?.correctAnswer;
     const correct = preferred || prompt('Respuesta correcta (texto exacto)')
     if (!correct) return
@@ -515,6 +517,7 @@ export default function TeacherDashboard({ onClose }) {
       
       <DashboardHeader 
         classData={selectedClassData}
+        questionRunning={questionRunning}
         onToggleActive={() => handleToggleActiveClass(selected)}
         onDelete={() => handleDeleteClass(selected)}
         onRestartGame={handleRestartGame}
