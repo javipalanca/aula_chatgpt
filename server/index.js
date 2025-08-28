@@ -54,7 +54,7 @@ try {
   // (done below) so we defer their creation until those helpers exist.
 
   // Helper placeholder for fetchConnectedParticipants; actual binding will be set after services are created
-  let fetchConnectedParticipants = async (classId, opts = {}) => { throw new Error('participant service not initialized') }  npm test -- --reporter verbose
+  let fetchConnectedParticipants = async (classId, opts = {}) => { throw new Error('participant service not initialized') }
 
   // WebSocket server for real-time updates
   const wss = new WebSocketServer({ noServer: true })
