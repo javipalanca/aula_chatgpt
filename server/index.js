@@ -2,10 +2,11 @@
 /* eslint-env node */
 import dotenv from 'dotenv'
 dotenv.config()
-import express from 'express'
-import cors from 'cors'
-import { MongoClient } from 'mongodb'
+import app from './app.js'
+import { connectDb, getCollection } from './lib/db.js'
+import ParticipantsRepo from './repositories/ParticipantsRepo.js'
 import { WebSocketServer } from 'ws'
+import LLMEvaluator from './services/LLMEvaluator.js'
 
 const MONGO_URI = process.env.MONGO_URI || ''
 const MONGO_DB = process.env.MONGO_DB || 'aula_chatgpt'
@@ -14,147 +15,37 @@ const PORT = process.env.PORT || 4000
 // helper to escape CSV fields
 function csvEscape(v){ const s = String(v||''); if (s.includes(',') || s.includes('\n') || s.includes('"')) return '"'+s.replace(/"/g,'""')+'"'; return s }
 
-const app = express()
-app.use(cors())
-app.use(express.json())
+// `app` is created and configured in server/app.js
 const OLLAMA_URL = process.env.VITE_OLLAMA_URL || ''
 const OLLAMA_MODEL = process.env.VITE_OLLAMA_MODEL || ''
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || ''
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o'
 const OPENAI_URL = process.env.OPENAI_URL || ''
 
-// Evaluate an open-text answer using an LLM. Prefer OpenAI (ChatGPT) when OPENAI_API_KEY
-// is available; otherwise fall back to Ollama if configured. The evaluator is instructed
-// to return strict JSON: { score: 0..1, feedback: '...' }.
+// Instantiate evaluator service
+const llmEvaluator = new LLMEvaluator({ openaiKey: OPENAI_API_KEY, openaiUrl: OPENAI_URL, openaiModel: OPENAI_MODEL, ollamaUrl: OLLAMA_URL, ollamaModel: OLLAMA_MODEL })
+
+// Backwards-compatible wrapper
 async function evaluateAnswerWithLLM(questionPayload = {}, answerText = '') {
-  const questionText = (questionPayload && (questionPayload.title || questionPayload.prompt || questionPayload.question)) ? (questionPayload.title || questionPayload.prompt || questionPayload.question) : ''
-  const isBadPromptImprovement = (questionPayload && questionPayload.source === 'BAD_PROMPTS')
-  const isPromptEvaluation = (questionPayload && (questionPayload.evaluation === 'prompt' || questionPayload.source === 'PROMPTS'))
-
-  const system = isBadPromptImprovement
-    ? `Eres un experto en ingeniería de prompts. El siguiente es un mal prompt que un estudiante ha intentado mejorar. Evalúa cuánto ha mejorado el prompt del estudiante en comparación con el original. Devuelve únicamente JSON válido con dos campos: score (número entre 1 y 100) y feedback (cadena corta y constructiva). Un buen prompt debe ser claro, específico, y ético.`
-    : isPromptEvaluation
-    ? `Eres un experto en ingeniería de prompts. Evalúa la calidad del siguiente prompt de un estudiante. Devuelve únicamente JSON válido con dos campos: score (número entre 1 y 100) y feedback (cadena corta y constructiva). Un buen prompt debe ser claro, específico, y ético. Por ejemplo, un prompt para hacer trampa en un examen es de muy baja calidad (score 1).`
-    : `Eres un evaluador objetivo que puntúa respuestas de estudiantes. Devuelve únicamente JSON válido con dos campos: score (número entre 1 y 100) y feedback (cadena corta).`
-
-  const user = isBadPromptImprovement
-    ? `Mal prompt original: ${String(questionText).slice(0,1000)}
-
-Prompt mejorado del alumno: ${String(answerText).slice(0,2000)}
-
-Evalúa la mejora del prompt: asigna un score entre 1 (poca o nula mejora) y 100 (excelente mejora) y da feedback. Devuelve JSON: {"score": 1-100, "feedback": "..." }.`
-    : isPromptEvaluation
-    ? `Prompt del alumno: ${String(answerText).slice(0,2000)}
-
-Evalúa la calidad de este prompt: asigna un score entre 1 (muy malo) y 100 (excelente) y da feedback. Devuelve JSON: {"score": 1-100, "feedback": "..." }.`
-    : `Pregunta: ${String(questionText).slice(0,1000)}
-
-Respuesta del alumno: ${String(answerText).slice(0,2000)}
-
-Evalúa la respuesta: asigna un score entre 1 (muy mala) y 100 (excelente) según la calidad, claridad y cumplimiento de la consigna. Devuelve JSON: {"score": 1-100, "feedback": "..." }.`
-  
-  // Try OpenAI Chat Completions first
-  if (OPENAI_API_KEY) {
-    try {
-      const url = `${OPENAI_URL}/v1/chat/completions`
-      const body = { model: OPENAI_MODEL, messages: [ { role: 'system', content: system }, { role: 'user', content: user } ], temperature: 0.2, max_tokens: 200 }
-      try { console.info('LLM: using OpenAI', { provider: 'openai', model: OPENAI_MODEL, url }) } catch(e) { /* ignore logging errors */ }
-  try { console.debug('OpenAI request body (truncated)', JSON.stringify(body).slice(0,1000)) } catch(e) { /* ignore */ }
-  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${OPENAI_API_KEY}` }, body: JSON.stringify(body) })
-      const text = await r.text()
-      if (!r.ok) {
-        try { console.warn('OpenAI eval failed', { status: r.status, body: String(text).slice(0,200) }) } catch(e) { console.warn('OpenAI eval failed', r.status) }
-      } else {
-        try { console.debug('OpenAI raw response (truncated):', String(text).slice(0,2000)) } catch(e) { /* ignore */ }
-        // Try parse JSON from content
-        try {
-          const parsed = JSON.parse(text)
-          // OpenAI responses include choices[].message.content possibly with JSON inside
-          const content = (parsed.choices && parsed.choices[0] && parsed.choices[0].message && parsed.choices[0].message.content) ? parsed.choices[0].message.content : null
-          if (content) {
-            try { return JSON.parse(content) } catch (e) {
-              // content may have extra text; attempt to extract JSON substring
-              const s = content.indexOf('{')
-              const eidx = content.lastIndexOf('}')
-              if (s !== -1 && eidx !== -1 && eidx > s) {
-                try { return JSON.parse(content.substring(s, eidx+1)) } catch(err) { /* fallthrough */ }
-              }
-            }
-          }
-        } catch (e) {
-          // Some OpenAI wrappers return raw text; attempt to parse
-          try {
-            const content = text
-            const s = content.indexOf('{')
-            const eidx = content.lastIndexOf('}')
-            if (s !== -1 && eidx !== -1 && eidx > s) return JSON.parse(content.substring(s, eidx+1))
-          } catch (ee) { /* ignore */ }
-        }
-      }
-    } catch (e) { console.warn('OpenAI eval error', e) }
-  }
-
-  // Fallback to Ollama if configured
-  if (OLLAMA_URL) {
-    try {
-      const url = OLLAMA_URL.replace(/\/$/, '') + '/api/generate'
-      try { console.info('LLM: using Ollama', { provider: 'ollama', model: OLLAMA_MODEL, url }) } catch(e) { /* ignore logging errors */ }
-  try { console.debug('Ollama request body (truncated)', JSON.stringify({ model: OLLAMA_MODEL, prompt: `${system}\n\n${user}`, max_tokens: 200 }).slice(0,1000)) } catch(e) { /* ignore */ }
-  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: OLLAMA_MODEL, prompt: `${system}\n\n${user}`, max_tokens: 200 }) })
-      const text = await r.text()
-      if (!r.ok) {
-        try { console.warn('Ollama eval failed', { status: r.status, body: String(text).slice(0,200) }) } catch(e) { console.warn('Ollama eval failed', r.status) }
-      } else {
-        try { console.debug('Ollama raw response (truncated):', String(text).slice(0,2000)) } catch(e) { /* ignore */ }
-        try {
-          const parsed = JSON.parse(text)
-          // Ollama responses may be raw JSON or contain results[0].content
-          if (Array.isArray(parsed)) return parsed[0]
-          if (parsed && Array.isArray(parsed.results) && parsed.results[0] && parsed.results[0].content) {
-            const content = parsed.results[0].content
-            try { return JSON.parse(content) } catch (e) {
-              const s = content.indexOf('{')
-              const eidx = content.lastIndexOf('}')
-              if (s !== -1 && eidx !== -1 && eidx > s) return JSON.parse(content.substring(s, eidx+1))
-            }
-          }
-        } catch (e) { console.warn('parse ollama eval response failed', e) }
-      }
-    } catch (e) { console.warn('Ollama eval error', e) }
-  }
-
-  // If no evaluator or parsing failed, return neutral
-  return { score: 0, feedback: 'Evaluador no disponible o no pudo parsear respuesta' }
+  return llmEvaluator.evaluate(questionPayload, answerText)
 }
 
 try {
-  const client = new MongoClient(MONGO_URI)
-  await client.connect()
+  await connectDb({ uri: MONGO_URI, dbName: MONGO_DB })
   console.log('Connected to MongoDB', MONGO_URI, 'db=', MONGO_DB)
-  const db = client.db(MONGO_DB)
 
-  const progress = db.collection('progress')
-  const settings = db.collection('settings')
-  const classes = db.collection('classes')
-  const participants = db.collection('participants')
-  const challenges = db.collection('challenges')
-  const answers = db.collection('answers')
-  const diagnosisResults = db.collection('diagnosis_results')
+  const progress = getCollection('progress')
+  const settings = getCollection('settings')
+  const classes = getCollection('classes')
+  const challenges = getCollection('challenges')
+  const answers = getCollection('answers')
+  const diagnosisResults = getCollection('diagnosis_results')
+
+  const participantsRepo = new ParticipantsRepo()
 
   // Helper: fetch and normalize participants for teacher views (only connected by default)
   const fetchConnectedParticipants = async (classId, { includeDisconnected = false } = {}) => {
-    const q = includeDisconnected ? { classId } : { classId, connected: true }
-    const docs = await participants.find(q).toArray()
-    const out = []
-    for (const d of docs) {
-      if (!d) continue
-      // Skip entries without a sessionId
-      if (!d.sessionId) continue
-      const sid = String(d.sessionId)
-      const name = (d.displayName && String(d.displayName).trim()) ? String(d.displayName).trim() : `Alumno-${sid.slice(0,5)}`
-      out.push({ sessionId: sid, displayName: name, score: d.score || 0, lastSeen: d.lastSeen, connected: !!d.connected })
-    }
-    return out
+    return participantsRepo.listConnected(classId, { includeDisconnected })
   }
 
   // WebSocket server for real-time updates
@@ -254,8 +145,8 @@ try {
   app.delete('/api/classes/:id', async (req, res) => {
     const id = req.params.id
     try {
-      await classes.deleteOne({ id })
-      await participants.deleteMany({ classId: id })
+  await classes.deleteOne({ id })
+  await participantsRepo.deleteByClass(id)
       await challenges.deleteMany({ classId: id })
       return res.json({ ok: true })
     } catch (e) {
@@ -289,23 +180,21 @@ try {
       }
       if (typeof payload.scoreDelta !== 'undefined') {
         // increment existing participant score atomically and update lastSeen/displayName
-        await participants.updateOne({ id: payload.id }, { $inc: { score: Number(payload.scoreDelta) || 0 }, $set: { lastSeen: new Date(), displayName: payload.displayName || (`Alumno-${payload.sessionId ? String(payload.sessionId).slice(0,5) : ''}`) } }, { upsert: true })
+        await participantsRepo.incScore(payload.classId, payload.sessionId, Number(payload.scoreDelta) || 0)
         try { participantLastPersist.set(pKey, Date.now()) } catch(e) { /* ignore */ }
       } else if (typeof payload.score !== 'undefined') {
         // legacy: replace full payload
-        await participants.replaceOne({ id: payload.id }, payload, { upsert: true })
+        await participantsRepo.upsert({ id: payload.id, classId: payload.classId, sessionId: payload.sessionId, displayName: payload.displayName, score: payload.score, lastSeen: new Date(), connected: !!payload.connected })
         try { participantLastPersist.set(pKey, Date.now()) } catch(e) { /* ignore */ }
       } else {
-        await participants.replaceOne({ id: payload.id }, payload, { upsert: true })
+        await participantsRepo.upsert({ id: payload.id, classId: payload.classId, sessionId: payload.sessionId, displayName: payload.displayName, score: payload.score || 0, lastSeen: new Date(), connected: !!payload.connected })
         try { participantLastPersist.set(pKey, Date.now()) } catch(e) { /* ignore */ }
       }
       // notify websocket clients about updated participants for the class
-    try {
-  try {
-    const docs = await fetchConnectedParticipants(payload.classId)
-    broadcast({ type: 'participants-updated', classId: payload.classId, participants: docs }, payload.classId)
-  } catch(e) { console.warn('broadcast participants-updated failed', e) }
-    } catch(e) { console.warn('broadcast participants-updated failed', e) }
+      try {
+        const docs = await fetchConnectedParticipants(payload.classId)
+        broadcast({ type: 'participants-updated', classId: payload.classId, participants: docs }, payload.classId)
+      } catch(e) { console.warn('broadcast participants-updated failed', e) }
       return res.json({ ok: true })
     } catch (err) {
       console.error('participants POST error', err)
@@ -318,16 +207,16 @@ try {
     const { classId } = req.body || {};
     if (!classId) return res.status(400).json({ error: 'classId is required' });
     try {
-      await participants.updateMany({ classId }, { $set: { score: 0 } });
-      // Optionally, broadcast an update to clients if needed
-      const docs = await fetchConnectedParticipants(classId, { includeDisconnected: true });
-      broadcast({ type: 'participants-updated', classId, participants: docs }, classId);
-      return res.json({ ok: true });
+      await participantsRepo.resetScores(classId)
+      // Optionally, broadcast an update to clients
+      const docs = await participantsRepo.listConnected(classId, { includeDisconnected: true })
+      broadcast({ type: 'participants-updated', classId, participants: docs }, classId)
+      return res.json({ ok: true })
     } catch (err) {
-      console.error('reset-scores failed', err);
-      return res.status(500).json({ ok: false, error: String(err) });
+      console.error('reset-scores failed', err)
+      return res.status(500).json({ ok: false, error: String(err) })
     }
-  });
+  })
 
   app.get('/api/challenges', async (req, res) => {
     const classId = req.query.classId
@@ -432,7 +321,7 @@ try {
             const percent = Math.min(1, timeTakenMs / (totalDurationSec * 1000))
             const points = (questionPayload && Number(questionPayload.points)) ? Number(questionPayload.points) : 100
             const awarded = Math.round((Number(points) || 0) * scoreFraction * Math.max(0, 1 - percent))
-            if (awarded > 0) await participants.updateOne({ classId: payload.classId, sessionId: payload.sessionId }, { $inc: { score: awarded }, $set: { lastSeen: new Date() } }, { upsert: true })
+            if (awarded > 0) await participantsRepo.incScore(payload.classId, payload.sessionId, awarded)
             // attach evaluation to answer doc
             try { await answers.replaceOne({ id }, { ...doc, evaluation: { score: scoreFraction, feedback, awardedPoints: awarded, evaluatedAt: new Date(), source: 'client' } }, { upsert: true }) } catch(e) { console.warn('attach client evaluation to answer failed (http)', e) }
             // broadcast answer-evaluated so teachers receive it immediately
@@ -491,7 +380,7 @@ try {
                 const timeTakenMs = Math.max(0, answerTs - startedAt)
                 const percent = Math.min(1, timeTakenMs / (totalDurationSec * 1000))
                 const award = Math.round((Number(points) || 0) * Math.max(0, 1 - percent))
-                if (award > 0) await participants.updateOne({ classId, sessionId: a.sessionId }, { $inc: { score: award }, $set: { lastSeen: new Date() } }, { upsert: true })
+                if (award > 0) await participantsRepo.incScore(classId, a.sessionId, award)
               } catch(e) { console.error('score update failed', e) }
             }
           }
@@ -512,7 +401,7 @@ try {
               const timeTakenMs = Math.max(0, answerTs - startedAt)
               const percent = Math.min(1, timeTakenMs / (totalDurationSec * 1000))
               const award = Math.round((Number(points) || 0) * fraction * Math.max(0, 1 - percent))
-              if (award > 0) await participants.updateOne({ classId, sessionId: a.sessionId }, { $inc: { score: award }, $set: { lastSeen: new Date() } }, { upsert: true })
+              if (award > 0) await participantsRepo.incScore(classId, a.sessionId, award)
             } catch(e) { console.error('redflags score update failed', e) }
           }
         } else if (evalMode === 'open' || evalMode === 'prompt') {
@@ -530,7 +419,7 @@ try {
               const percent = Math.min(1, timeTakenMs / (totalDurationSec * 1000))
               const awarded = Math.round((Number(points) || 0) * scoreFraction * Math.max(0, 1 - percent))
               if (awarded > 0) {
-                await participants.updateOne({ classId, sessionId: a.sessionId }, { $inc: { score: awarded }, $set: { lastSeen: new Date() } }, { upsert: true })
+                await participantsRepo.incScore(classId, a.sessionId, awarded)
               }
               return { sessionId: a.sessionId, score: scoreFraction, feedback: evalRes.feedback || '', awardedPoints: awarded }
             } catch (e) { console.error('LLM evaluation failed for answer', e); return { sessionId: a.sessionId, score: 0, feedback: 'error', awardedPoints: 0 } }
@@ -736,7 +625,7 @@ try {
     try {
       const counts = {
         classes: await classes.countDocuments(),
-        participants: await participants.countDocuments(),
+        participants: await participantsRepo.count(),
         challenges: await challenges.countDocuments(),
         diagnosis_results: await diagnosisResults.countDocuments()
       }
@@ -787,14 +676,14 @@ try {
                 // Upsert by stable id `${classId}:${sessionId}` to avoid duplicate docs
                 const pid = `${cid}:${sessionId}`
                 try {
-                  const prev = await participants.findOne({ id: pid })
+                  const prev = await participantsRepo.findOneById(pid)
                   const toSet = { lastSeen: new Date(), connected: true }
                   // prefer explicit displayName supplied by client subscribe payload
                   if (obj && obj.displayName) toSet.displayName = String(obj.displayName)
                   else if (prev && prev.displayName) toSet.displayName = prev.displayName
                   else toSet.displayName = `Alumno-${String(sessionId).slice(0,5)}`
                   // ensure classId/sessionId stored on document for queries
-                  await participants.updateOne({ id: pid }, { $set: { ...toSet, classId: cid, sessionId } }, { upsert: true })
+                  await participantsRepo.upsert({ id: pid, ...toSet, classId: cid, sessionId })
                 } catch (e) {
                   console.warn('subscribe participant upsert failed', e)
                 }
@@ -827,10 +716,10 @@ try {
             const cid = obj.classId
             const sid = obj.sessionId
             try {
-              const prev = await participants.findOne({ classId: cid, sessionId: sid })
+              const prev = await participantsRepo.findOneByClassSession(cid, sid)
               if (!prev || prev.connected !== true) {
                 // mark connected and update lastSeen
-                  await participants.updateOne({ classId: cid, sessionId: sid }, { $set: { lastSeen: new Date(), connected: true, displayName: (prev && prev.displayName) ? prev.displayName : (`Alumno-${String(sid).slice(0,5)}`) } }, { upsert: true })
+                  await participantsRepo.upsert({ id: `${cid}:${sid}`, classId: cid, sessionId: sid, lastSeen: new Date(), connected: true, displayName: (prev && prev.displayName) ? prev.displayName : (`Alumno-${String(sid).slice(0,5)}`) })
                   // record persist time to avoid immediate subsequent writes
                   try { participantLastPersist.set(`${cid}:${sid}`, Date.now()) } catch(e) { /* ignore */ }
                 try {
@@ -846,7 +735,7 @@ try {
                     if (now - last < PARTICIPANT_MIN_PERSIST_MS) {
                       // skip frequent writes
                     } else {
-                      await participants.updateOne({ classId: cid, sessionId: sid }, { $set: { lastSeen: new Date() } }, { upsert: true })
+                      await participantsRepo.upsert({ id: `${cid}:${sid}`, classId: cid, sessionId: sid, lastSeen: new Date(), connected: true })
                       participantLastPersist.set(key, now)
                     }
                   } catch(e) { console.warn('update lastSeen on ping failed', e) }
@@ -907,7 +796,7 @@ try {
                       const percent = Math.min(1, timeTakenMs / (totalDurationSec * 1000))
                       const points = (questionPayload && Number(questionPayload.points)) ? Number(questionPayload.points) : 100
                       const awarded = Math.round((Number(points) || 0) * scoreFraction * Math.max(0, 1 - percent))
-                      if (awarded > 0) await participants.updateOne({ classId: payload.classId, sessionId: payload.sessionId }, { $inc: { score: awarded }, $set: { lastSeen: new Date() } }, { upsert: true })
+                      if (awarded > 0) await participantsRepo.incScore(payload.classId, payload.sessionId, awarded)
                       try { await answers.replaceOne({ id }, { ...doc, evaluation: { score: scoreFraction, feedback, awardedPoints: awarded, evaluatedAt: new Date(), source: 'client' } }, { upsert: true }) } catch(e) { console.warn('attach client evaluation to answer failed (ws)', e) }
                       try { broadcast({ type: 'answer-evaluated', classId: payload.classId, questionId: payload.questionId, sessionId: payload.sessionId, score: scoreFraction, feedback, awardedPoints: awarded, source: 'client' }, payload.classId) } catch(e) { console.warn('broadcast answer-evaluated failed (ws)', e) }
                     } else {
@@ -921,7 +810,7 @@ try {
                       const percent = Math.min(1, timeTakenMs / (totalDurationSec * 1000))
                       const points = (questionPayload && Number(questionPayload.points)) ? Number(questionPayload.points) : 100
                       const awarded = Math.round((Number(points) || 0) * scoreFraction * Math.max(0, 1 - percent))
-                      if (awarded > 0) await participants.updateOne({ classId: payload.classId, sessionId: payload.sessionId }, { $inc: { score: awarded }, $set: { lastSeen: new Date() } }, { upsert: true })
+                      if (awarded > 0) await participantsRepo.incScore(payload.classId, payload.sessionId, awarded)
                       try { await answers.replaceOne({ id }, { ...doc, evaluation: { score: scoreFraction, feedback: evalRes.feedback || '', awardedPoints: awarded, evaluatedAt: new Date(), source: 'server' } }, { upsert: true }) } catch(e) { console.warn('attach evaluation to answer failed (ws)', e) }
                       try { broadcast({ type: 'answer-evaluated', classId: payload.classId, questionId: payload.questionId, sessionId: payload.sessionId, score: scoreFraction, feedback: evalRes.feedback || '', awardedPoints: awarded, source: 'server' }, payload.classId) } catch(e) { console.warn('broadcast answer-evaluated failed (ws)', e) }
                     }
@@ -946,7 +835,7 @@ try {
               }
               if (sessionId) {
                 // mark participant disconnected
-                try { await participants.updateOne({ classId: cid, sessionId }, { $set: { lastSeen: new Date(), connected: false } }, { upsert: false }) } catch(e) { /* ignore */ }
+                try { await participantsRepo.markDisconnected(cid, sessionId) } catch(e) { /* ignore */ }
                 try { broadcast({ type: 'participant-disconnected', classId: cid, sessionId }, cid) } catch(e) { /* ignore */ }
                 try {
                   const docs = await fetchConnectedParticipants(cid)
@@ -997,7 +886,7 @@ try {
                         const timeTakenMs = Math.max(0, answerTs - startedAt)
                         const percent = Math.min(1, timeTakenMs / (totalDurationSec * 1000))
                         const award = Math.round((Number(points) || 0) * Math.max(0, 1 - percent))
-                        if (award > 0) await participants.updateOne({ classId, sessionId: a.sessionId }, { $inc: { score: award }, $set: { lastSeen: new Date() } }, { upsert: true })
+                        if (award > 0) await participantsRepo.incScore(classId, a.sessionId, award)
                       } catch(e) { console.error('score update failed in ws reveal', e) }
                     }
                   }
@@ -1016,7 +905,7 @@ try {
                       const timeTakenMs = Math.max(0, answerTs - startedAt)
                       const percent = Math.min(1, timeTakenMs / (totalDurationSec * 1000))
                       const award = Math.round((Number(points) || 0) * fraction * Math.max(0, 1 - percent))
-                      if (award > 0) await participants.updateOne({ classId, sessionId: a.sessionId }, { $inc: { score: award }, $set: { lastSeen: new Date() } }, { upsert: true })
+                      if (award > 0) await participantsRepo.incScore(classId, a.sessionId, award)
                     } catch(e) { console.error('redflags score update failed in ws reveal', e) }
                   }
                 } else if (evalMode === 'open' || evalMode === 'prompt') {
@@ -1034,7 +923,7 @@ try {
                         const timeTakenMs = Math.max(0, answerTs - startedAt)
                         const percent = Math.min(1, timeTakenMs / (totalDurationSec * 1000))
                         const awarded = Math.round((Number(points) || 0) * scoreFraction * Math.max(0, 1 - percent))
-                        if (awarded > 0) await participants.updateOne({ classId, sessionId: a.sessionId }, { $inc: { score: awarded }, $set: { lastSeen: new Date() } }, { upsert: true })
+                        if (awarded > 0) await participantsRepo.incScore(classId, a.sessionId, awarded)
                         evals.push({ sessionId: a.sessionId, score: scoreFraction, feedback: evalRes.feedback || '', awardedPoints: awarded })
                       } catch (e) { console.error('LLM eval failed (ws) for', a.sessionId, e); evals.push({ sessionId: a.sessionId, score: 0, feedback: 'error', awardedPoints: 0 }) }
                     }
@@ -1081,7 +970,7 @@ try {
               const sid = ws._sessionId || null
               if (sid) {
                 // Update participant record to reflect disconnection (set lastSeen)
-                await participants.updateOne({ classId: cid, sessionId: sid }, { $set: { lastSeen: new Date(), connected: false } }, { upsert: false })
+                await participantsRepo.markDisconnected(cid, sid)
                 // broadcast a lightweight event so teacher UIs can react
                 try { broadcast({ type: 'participant-disconnected', classId: cid, sessionId: sid }, cid) } catch(e) { console.warn('broadcast participant-disconnected failed', e) }
                 // Also broadcast updated participants list
