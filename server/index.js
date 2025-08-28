@@ -13,6 +13,8 @@ import DiagnosisRepo from './repositories/DiagnosisRepo.js'
 import SettingsRepo from './repositories/SettingsRepo.js'
 import { WebSocketServer } from 'ws'
 import LLMEvaluator from './services/LLMEvaluator.js'
+import ParticipantService from './services/ParticipantService.js'
+import AnswerService from './services/AnswerService.js'
 
 const MONGO_URI = process.env.MONGO_URI || ''
 const MONGO_DB = process.env.MONGO_DB || 'aula_chatgpt'
@@ -40,22 +42,19 @@ try {
   await connectDb({ uri: MONGO_URI, dbName: MONGO_DB })
   console.log('Connected to MongoDB', MONGO_URI, 'db=', MONGO_DB)
 
-  // const progress = getCollection('progress') -- replaced by ProgressRepo
   const settings = new SettingsRepo()
-  // const classes = getCollection('classes') -- replaced by ClassesRepo
-  // const challenges = getCollection('challenges') -- replaced by ChallengesRepo
   const diagnosisResults = new DiagnosisRepo()
-
   const participantsRepo = new ParticipantsRepo()
   const answersRepo = new AnswersRepo()
   const classesRepo = new ClassesRepo()
   const challengesRepo = new ChallengesRepo()
   const progressRepo = new ProgressRepo()
 
-  // Helper: fetch and normalize participants for teacher views (only connected by default)
-  const fetchConnectedParticipants = async (classId, { includeDisconnected = false } = {}) => {
-    return participantsRepo.listConnected(classId, { includeDisconnected })
-  }
+  // NOTE: services are instantiated after we declare in-memory maps and broadcast
+  // (done below) so we defer their creation until those helpers exist.
+
+  // Helper placeholder for fetchConnectedParticipants; actual binding will be set after services are created
+  let fetchConnectedParticipants = async (classId, opts = {}) => { throw new Error('participant service not initialized') }  npm test -- --reporter verbose
 
   // WebSocket server for real-time updates
   const wss = new WebSocketServer({ noServer: true })
@@ -91,6 +90,13 @@ try {
       try { s.send(raw) } catch(e) { console.warn('ws send failed', e) }
     }
   }
+
+  // Instantiate services now that broadcast and in-memory maps exist
+  const participantService = new ParticipantService({ participantsRepo, broadcast, participantLastPersist, participantLastBroadcast, options: { minPersistMs: PARTICIPANT_MIN_PERSIST_MS, minBroadcastMs: PARTICIPANT_BROADCAST_MIN_MS } })
+  const answerService = new AnswerService({ answersRepo, participantsRepo, evaluator: llmEvaluator, broadcast })
+
+  // Bind helper to delegate to participantService
+  fetchConnectedParticipants = async (classId, opts = {}) => participantService.fetchConnectedParticipants(classId, opts)
 
   // (removed unused fetchWithTimeout helper)
 
@@ -177,32 +183,8 @@ try {
     if (!payload.id) return res.status(400).json({ error: 'id required' })
     payload.updated_at = new Date()
     try {
-      // Basic server-side debounce: avoid persisting frequent non-score updates for the same participant
-      const pKey = `${payload.classId || 'noclass'}:${payload.sessionId || payload.id}`
-      const now = Date.now()
-      const lastPersist = participantLastPersist.get(pKey) || 0
-      const isScoreOp = typeof payload.scoreDelta !== 'undefined' || typeof payload.score !== 'undefined'
-      if (!isScoreOp && now - lastPersist < PARTICIPANT_MIN_PERSIST_MS) {
-        // Skip write to DB to reduce load; respond OK. Do not broadcast.
-        return res.json({ ok: true, skipped: true })
-      }
-      if (typeof payload.scoreDelta !== 'undefined') {
-        // increment existing participant score atomically and update lastSeen/displayName
-        await participantsRepo.incScore(payload.classId, payload.sessionId, Number(payload.scoreDelta) || 0)
-        try { participantLastPersist.set(pKey, Date.now()) } catch(e) { /* ignore */ }
-      } else if (typeof payload.score !== 'undefined') {
-        // legacy: replace full payload
-        await participantsRepo.upsert({ id: payload.id, classId: payload.classId, sessionId: payload.sessionId, displayName: payload.displayName, score: payload.score, lastSeen: new Date(), connected: !!payload.connected })
-        try { participantLastPersist.set(pKey, Date.now()) } catch(e) { /* ignore */ }
-      } else {
-        await participantsRepo.upsert({ id: payload.id, classId: payload.classId, sessionId: payload.sessionId, displayName: payload.displayName, score: payload.score || 0, lastSeen: new Date(), connected: !!payload.connected })
-        try { participantLastPersist.set(pKey, Date.now()) } catch(e) { /* ignore */ }
-      }
-      // notify websocket clients about updated participants for the class
-      try {
-        const docs = await fetchConnectedParticipants(payload.classId)
-        broadcast({ type: 'participants-updated', classId: payload.classId, participants: docs }, payload.classId)
-      } catch(e) { console.warn('broadcast participants-updated failed', e) }
+      const result = await participantService.saveParticipant(payload)
+      if (result && result.skipped) return res.json({ ok: true, skipped: true })
       return res.json({ ok: true })
     } catch (err) {
       console.error('participants POST error', err)
@@ -291,53 +273,8 @@ try {
     if (!payload.classId || !payload.sessionId || !payload.questionId) return res.status(400).json({ error: 'classId, sessionId and questionId required' })
   try { console.info('HTTP answer submit received', { classId: payload.classId, questionId: payload.questionId, sessionId: payload.sessionId, preview: String(payload.answer).slice(0,200) }) } catch(e) { /* ignore */ }
     try {
-      const id = `${payload.classId}:${payload.sessionId}:${payload.questionId}`
-      const doc = { id, classId: payload.classId, sessionId: payload.sessionId, questionId: payload.questionId, answer: payload.answer, created_at: new Date() }
-  await answersRepo.upsert(doc)
-      // broadcast answers-updated for this class/question (raw answer)
-      try { broadcast({ type: 'answers-updated', classId: payload.classId, questionId: payload.questionId, answer: doc }, payload.classId) } catch(e) { console.warn('broadcast answers-updated failed', e) }
-
-      // compute aggregate counts for this question in this class and broadcast answers-count
-      try {
-  const docs = await answersRepo.findByClassQuestion(payload.classId, payload.questionId)
-        const counts = {}
-        for (const a of docs) {
-          const key = a.answer == null ? '' : String(a.answer)
-          counts[key] = (counts[key] || 0) + 1
-        }
-        const total = Object.values(counts).reduce((s,v)=>s+v,0)
-        const agg = { type: 'answers-count', classId: payload.classId, questionId: payload.questionId, total, counts }
-        try { broadcast(agg, payload.classId) } catch(e) { console.warn('broadcast answers-count failed', e) }
-      } catch(e) { console.warn('compute answers aggregate failed', e) }
-
-      // If this question expects LLM evaluation (open/prompt), do nothing, evaluation is handled by the client
-      try {
-        const active = activeQuestions.get(payload.classId)
-        const questionPayload = (active && active.question && active.question.payload) ? active.question.payload : {}
-        const evalMode = (questionPayload && typeof questionPayload.evaluation === 'string') ? questionPayload.evaluation : ((questionPayload && (questionPayload.source === 'BAD_PROMPTS' || questionPayload.source === 'PROMPTS')) ? 'prompt' : 'mcq')
-        // If client sent an evaluation (HTTP fallback from submitEvaluatedAnswer), attach it, award points and broadcast
-        if (payload.evaluation && (evalMode === 'open' || evalMode === 'prompt')) {
-          try {
-            // normalize client score (accept 0..1 or 1..100)
-            const rawClientScore = Number(payload.evaluation.score || 0)
-            const scoreFraction = Math.max(0, Math.min(1, (rawClientScore > 1 ? rawClientScore / 100 : rawClientScore)))
-            const feedback = payload.evaluation.feedback || ''
-            const answerTs = doc.created_at ? (new Date(doc.created_at)).getTime() : Date.now()
-            const totalDurationSec = (active && active.question && Number(active.question.duration)) ? Number(active.question.duration) : 30
-            const startedAt = (active && active.startedAt) ? active.startedAt : (answerTs - (totalDurationSec * 1000))
-            const timeTakenMs = Math.max(0, answerTs - startedAt)
-            const percent = Math.min(1, timeTakenMs / (totalDurationSec * 1000))
-            const points = (questionPayload && Number(questionPayload.points)) ? Number(questionPayload.points) : 100
-            const awarded = Math.round((Number(points) || 0) * scoreFraction * Math.max(0, 1 - percent))
-            if (awarded > 0) await participantsRepo.incScore(payload.classId, payload.sessionId, awarded)
-            // attach evaluation to answer doc
-            try { await answersRepo.upsert({ ...doc, evaluation: { score: scoreFraction, feedback, awardedPoints: awarded, evaluatedAt: new Date(), source: 'client' } }) } catch(e) { console.warn('attach client evaluation to answer failed (http)', e) }
-            // broadcast answer-evaluated so teachers receive it immediately
-            try { broadcast({ type: 'answer-evaluated', classId: payload.classId, questionId: payload.questionId, sessionId: payload.sessionId, score: scoreFraction, feedback, awardedPoints: awarded, source: 'client' }, payload.classId) } catch(e) { console.warn('broadcast answer-evaluated failed (http)', e) }
-          } catch(e) { console.warn('handle client evaluation (http) failed', e) }
-        }
-      } catch(e) { console.warn('submit evaluation logic failed', e) }
-
+      const active = activeQuestions.get(payload.classId)
+      await answerService.submitAnswer({ classId: payload.classId, sessionId: payload.sessionId, questionId: payload.questionId, answer: payload.answer, evaluation: payload.evaluation, activeQuestion: active ? { question: active.question, startedAt: active.startedAt } : null })
       return res.json({ ok: true })
     } catch (err) { console.error('answers POST error', err); return res.status(500).json({ ok: false, error: String(err) }) }
   })
@@ -676,29 +613,12 @@ try {
             try { if (sessionId) ws._sessionId = sessionId } catch(e) { console.warn('assign sessionId to ws failed', e) }
             // record role for permission checks
             try { ws._role = role } catch(e) { /* ignore */ }
-            // If subscriber is a student: mark participant as connected in DB and broadcast updated participants
+            // If subscriber is a student: delegate to participantService to mark connected and broadcast
             try {
               if (sessionId && role === 'student') {
-                // Upsert by stable id `${classId}:${sessionId}` to avoid duplicate docs
-                const pid = `${cid}:${sessionId}`
-                try {
-                  const prev = await participantsRepo.findOneById(pid)
-                  const toSet = { lastSeen: new Date(), connected: true }
-                  // prefer explicit displayName supplied by client subscribe payload
-                  if (obj && obj.displayName) toSet.displayName = String(obj.displayName)
-                  else if (prev && prev.displayName) toSet.displayName = prev.displayName
-                  else toSet.displayName = `Alumno-${String(sessionId).slice(0,5)}`
-                  // ensure classId/sessionId stored on document for queries
-                  await participantsRepo.upsert({ id: pid, ...toSet, classId: cid, sessionId })
-                } catch (e) {
-                  console.warn('subscribe participant upsert failed', e)
-                }
-                try {
-                  const docs = await fetchConnectedParticipants(cid)
-                  broadcast({ type: 'participants-updated', classId: cid, participants: docs }, cid)
-                } catch(e) { console.warn('fetch participants after subscribe failed', e) }
+                await participantService.handleSubscribe({ classId: cid, sessionId, role, displayName: obj && obj.displayName })
               }
-            } catch(e) { console.warn('subscribe participant update failed', e) }
+            } catch (e) { console.warn('subscribe participant update failed', e) }
             // ack
                 try { ws.send(JSON.stringify({ type: 'subscribed', classId: cid, role })) } catch(e) { console.warn('ack send failed', e) }
             // If there is an active question for this class and this is a student, send it with remaining time
@@ -722,41 +642,7 @@ try {
             const cid = obj.classId
             const sid = obj.sessionId
             try {
-              const prev = await participantsRepo.findOneByClassSession(cid, sid)
-              if (!prev || prev.connected !== true) {
-                // mark connected and update lastSeen
-                  await participantsRepo.upsert({ id: `${cid}:${sid}`, classId: cid, sessionId: sid, lastSeen: new Date(), connected: true, displayName: (prev && prev.displayName) ? prev.displayName : (`Alumno-${String(sid).slice(0,5)}`) })
-                  // record persist time to avoid immediate subsequent writes
-                  try { participantLastPersist.set(`${cid}:${sid}`, Date.now()) } catch(e) { /* ignore */ }
-                try {
-                  const docs = await fetchConnectedParticipants(cid)
-                  broadcast({ type: 'participants-updated', classId: cid, participants: docs }, cid)
-                } catch (e) { console.warn('broadcast participants-updated after ping failed', e) }
-              } else {
-                // already connected: only update lastSeen
-                  try {
-                    const key = `${cid}:${sid}`
-                    const now = Date.now()
-                    const last = participantLastPersist.get(key) || 0
-                    if (now - last < PARTICIPANT_MIN_PERSIST_MS) {
-                      // skip frequent writes
-                    } else {
-                      await participantsRepo.upsert({ id: `${cid}:${sid}`, classId: cid, sessionId: sid, lastSeen: new Date(), connected: true })
-                      participantLastPersist.set(key, now)
-                    }
-                  } catch(e) { console.warn('update lastSeen on ping failed', e) }
-              }
-              // Broadcast a lightweight heartbeat event (throttled) so teacher UIs can update presence quickly
-              try {
-                const hbKey = `${cid}:${sid}`
-                const nowB = Date.now()
-                const lastB = participantLastBroadcast.get(hbKey) || 0
-                if (nowB - lastB >= (typeof PARTICIPANT_BROADCAST_MIN_MS !== 'undefined' ? PARTICIPANT_BROADCAST_MIN_MS : 2000)) {
-                  participantLastBroadcast.set(hbKey, nowB)
-                  const displayName = (prev && prev.displayName) ? prev.displayName : `Alumno-${String(sid).slice(0,5)}`
-                  try { broadcast({ type: 'participant-heartbeat', classId: cid, sessionId: sid, displayName, lastSeen: new Date(), connected: true }, cid) } catch(e) { console.warn('broadcast participant-heartbeat failed', e) }
-                }
-              } catch(e) { console.warn('participant-heartbeat logic failed', e) }
+              await participantService.handlePing(cid, sid)
             } catch (e) { console.warn('ping handling failed', e) }
             return
           }
@@ -764,65 +650,12 @@ try {
           // allow students to submit answers over WS (mirror of POST /api/answers)
           if (obj && obj.type === 'answer' && obj.classId && obj.sessionId && obj.questionId) {
             try {
-                const payload = obj || {}
-                try { console.info('WS answer submit received', { classId: payload.classId, questionId: payload.questionId, sessionId: payload.sessionId, preview: String(payload.answer).slice(0,200) }) } catch(e) { /* ignore */ }
-              const id = `${payload.classId}:${payload.sessionId}:${payload.questionId}`
-              const doc = { id, classId: payload.classId, sessionId: payload.sessionId, questionId: payload.questionId, answer: payload.answer, created_at: new Date() }
-              try { await answersRepo.upsert(doc) } catch(e) { console.error('answers WS replaceOne failed', e) }
-              // broadcast answers-updated for this class/question (raw answer)
-              try { broadcast({ type: 'answers-updated', classId: payload.classId, questionId: payload.questionId, answer: doc }, payload.classId) } catch(e) { console.warn('broadcast answers-updated failed (ws answer)', e) }
-              // compute aggregate counts for this question in this class and broadcast answers-count
+              const payload = obj || {}
+              try { console.info('WS answer submit received', { classId: payload.classId, questionId: payload.questionId, sessionId: payload.sessionId, preview: String(payload.answer).slice(0,200) }) } catch(e) { /* ignore */ }
+              const active = activeQuestions.get(payload.classId)
               try {
-                const docs = await answersRepo.findByClassQuestion(payload.classId, payload.questionId)
-                const counts = {}
-                for (const a of docs) {
-                  const key = a.answer == null ? '' : String(a.answer)
-                  counts[key] = (counts[key] || 0) + 1
-                }
-                const total = Object.values(counts).reduce((s,v)=>s+v,0)
-                const agg = { type: 'answers-count', classId: payload.classId, questionId: payload.questionId, total, counts }
-                try { broadcast(agg, payload.classId) } catch(e) { console.warn('broadcast answers-count failed (ws answer)', e) }
-              } catch(e) { console.warn('compute answers aggregate failed (ws answer)', e) }
-              // Evaluate immediately for open/prompt questions; allow client-provided evaluation
-              try {
-                const active = activeQuestions.get(payload.classId)
-                const totalDurationSec = (active && active.question && Number(active.question.duration)) ? Number(active.question.duration) : 30
-                const questionPayload = (active && active.question && active.question.payload) ? active.question.payload : {}
-                const evalMode = (questionPayload && typeof questionPayload.evaluation === 'string') ? questionPayload.evaluation : 'mcq'
-                if (evalMode === 'open' || evalMode === 'prompt') {
-                  try {
-                    if (payload.evaluation && typeof payload.evaluation.score === 'number') {
-                      // Accept client-provided score as either 0..1 or 1..100
-                      const rawClientScore = Number(payload.evaluation.score)
-                      const scoreFraction = Math.max(0, Math.min(1, (rawClientScore > 1 ? rawClientScore / 100 : rawClientScore)))
-                      const feedback = payload.evaluation.feedback || ''
-                      const answerTs = doc.created_at ? (new Date(doc.created_at)).getTime() : Date.now()
-                      const startedAt = (active && active.startedAt) ? active.startedAt : (answerTs - (totalDurationSec * 1000))
-                      const timeTakenMs = Math.max(0, answerTs - startedAt)
-                      const percent = Math.min(1, timeTakenMs / (totalDurationSec * 1000))
-                      const points = (questionPayload && Number(questionPayload.points)) ? Number(questionPayload.points) : 100
-                      const awarded = Math.round((Number(points) || 0) * scoreFraction * Math.max(0, 1 - percent))
-                      if (awarded > 0) await participantsRepo.incScore(payload.classId, payload.sessionId, awarded)
-                      try { await answersRepo.upsert({ ...doc, evaluation: { score: scoreFraction, feedback, awardedPoints: awarded, evaluatedAt: new Date(), source: 'client' } }) } catch(e) { console.warn('attach client evaluation to answer failed (ws)', e) }
-                      try { broadcast({ type: 'answer-evaluated', classId: payload.classId, questionId: payload.questionId, sessionId: payload.sessionId, score: scoreFraction, feedback, awardedPoints: awarded, source: 'client' }, payload.classId) } catch(e) { console.warn('broadcast answer-evaluated failed (ws)', e) }
-                    } else {
-                      const answerText = Array.isArray(payload.answer) ? payload.answer.join(', ') : String(payload.answer || '')
-                      const evalRes = await evaluateAnswerWithLLM(questionPayload, answerText)
-                      const _rawScore2 = (typeof evalRes.score === 'number') ? evalRes.score : Number(evalRes.score || 0)
-                      const scoreFraction = (typeof _rawScore2 === 'number' && !isNaN(_rawScore2)) ? Math.max(0, Math.min(1, (_rawScore2 > 1 ? _rawScore2 / 100 : _rawScore2))) : 0
-                      const answerTs = doc.created_at ? (new Date(doc.created_at)).getTime() : Date.now()
-                      const startedAt = (active && active.startedAt) ? active.startedAt : (answerTs - (totalDurationSec * 1000))
-                      const timeTakenMs = Math.max(0, answerTs - startedAt)
-                      const percent = Math.min(1, timeTakenMs / (totalDurationSec * 1000))
-                      const points = (questionPayload && Number(questionPayload.points)) ? Number(questionPayload.points) : 100
-                      const awarded = Math.round((Number(points) || 0) * scoreFraction * Math.max(0, 1 - percent))
-                      if (awarded > 0) await participantsRepo.incScore(payload.classId, payload.sessionId, awarded)
-                      try { await answersRepo.upsert({ ...doc, evaluation: { score: scoreFraction, feedback: evalRes.feedback || '', awardedPoints: awarded, evaluatedAt: new Date(), source: 'server' } }) } catch(e) { console.warn('attach evaluation to answer failed (ws)', e) }
-                      try { broadcast({ type: 'answer-evaluated', classId: payload.classId, questionId: payload.questionId, sessionId: payload.sessionId, score: scoreFraction, feedback: evalRes.feedback || '', awardedPoints: awarded, source: 'server' }, payload.classId) } catch(e) { console.warn('broadcast answer-evaluated failed (ws)', e) }
-                    }
-                  } catch(e) { console.error('LLM evaluation at submit (ws) failed', e) }
-                }
-              } catch(e) { console.warn('ws submit evaluation logic failed', e) }
+                await answerService.submitAnswer({ classId: payload.classId, sessionId: payload.sessionId, questionId: payload.questionId, answer: payload.answer, evaluation: payload.evaluation, activeQuestion: active ? { question: active.question, startedAt: active.startedAt } : null })
+              } catch (e) { console.error('answers WS handling error', e) }
             } catch (err) { console.error('answers WS handling error', err) }
             return
           }
@@ -840,15 +673,7 @@ try {
                 if (wsSet.size === 0) wsToClasses.delete(ws)
               }
               if (sessionId) {
-                // mark participant disconnected
-                try { await participantsRepo.markDisconnected(cid, sessionId) } catch(e) { /* ignore */ }
-                try { broadcast({ type: 'participant-disconnected', classId: cid, sessionId }, cid) } catch(e) { /* ignore */ }
-                try {
-                  const docs = await fetchConnectedParticipants(cid)
-                  broadcast({ type: 'participants-updated', classId: cid, participants: docs }, cid)
-                } catch(e) { /* ignore */ }
-                try { participantLastPersist.delete(`${cid}:${sessionId}`) } catch(e) { /* ignore */ }
-                try { participantLastBroadcast.delete(`${cid}:${sessionId}`) } catch(e) { /* ignore */ }
+                try { await participantService.handleDisconnect(cid, sessionId) } catch (e) { /* ignore */ }
               }
             } catch (e) { console.warn('unsubscribe handling failed', e) }
             return
@@ -963,7 +788,7 @@ try {
           }
         } catch(e) { console.warn('invalid ws message', e) }
       })
-      ws.on('close', async () => {
+        ws.on('close', async () => {
         // cleanup any class subscriptions
         const set = wsToClasses.get(ws)
         if (set) {
@@ -975,18 +800,8 @@ try {
             try {
               const sid = ws._sessionId || null
               if (sid) {
-                // Update participant record to reflect disconnection (set lastSeen)
-                await participantsRepo.markDisconnected(cid, sid)
-                // broadcast a lightweight event so teacher UIs can react
-                try { broadcast({ type: 'participant-disconnected', classId: cid, sessionId: sid }, cid) } catch(e) { console.warn('broadcast participant-disconnected failed', e) }
-                // Also broadcast updated participants list
-                try {
-                    const docs = await fetchConnectedParticipants(cid)
-                    broadcast({ type: 'participants-updated', classId: cid, participants: docs }, cid)
-                } catch(e) { console.warn('broadcast participants-updated failed on close', e) }
-                  // remove from in-memory persist map to avoid growth
-                  try { participantLastPersist.delete(`${cid}:${sid}`) } catch(e) { /* ignore */ }
-                  try { participantLastBroadcast.delete(`${cid}:${sid}`) } catch(e) { /* ignore */ }
+                // Delegate disconnect handling to participantService (which will mark disconnected and broadcast)
+                try { await participantService.handleDisconnect(cid, sid) } catch (e) { console.warn('handleDisconnect failed on ws close', e) }
               }
             } catch(e) { console.warn('close handler participant update failed', e) }
           }

@@ -175,6 +175,7 @@ Fase 3 — WSManager (encapsular websockets)
   - [ ] Inyectar repos/servicios en `WSManager` (ParticipantsRepo, AnswersRepo, LLMEvaluator, QuestionService si necesario).
   - [ ] Tests: simular clientes WS (mocks) y validar subscribe/publish/ping.
 
+
 Checkpoint (tras Fases 0-3)
  Ejecutar:
   - [x] `npm run lint` — resultado: [PASS]
