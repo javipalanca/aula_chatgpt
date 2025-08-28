@@ -1,11 +1,15 @@
 import { getCollection } from '../lib/db.js'
 
 export default class AnswersRepo {
-  constructor(colName = 'answers') {
-    this.colName = colName
+  constructor(opts = {}) {
+    // opts can be: colName string or { db, colName }
+    if (typeof opts === 'string') opts = { colName: opts }
+    this.colName = (opts && opts.colName) ? opts.colName : 'answers'
+    this._db = opts && opts.db ? opts.db : null
   }
 
   _col() {
+    if (this._db) return this._db.collection(this.colName)
     return getCollection(this.colName)
   }
 
