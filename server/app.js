@@ -6,11 +6,16 @@ import cors from 'cors'
 // starting the HTTP server. Keep this file minimal: middleware and router
 // mounting will happen here; specific routes/controllers are added later.
 
-const app = express()
-app.use(cors())
-app.use(express.json())
+export default function createApp() {
+	const app = express()
+	app.use(cors())
+	app.use(express.json())
 
-// Lightweight healthcheck for smoke testing
-app.get('/health', (req, res) => res.json({ ok: true }))
+	// Lightweight healthcheck for smoke testing
+	app.get('/health', (req, res) => res.json({ ok: true }))
 
-export default app
+	// Controllers should be mounted by the composition root (server/index.js)
+	// or explicitly by tests using `app.use('/api/xxx', controller)`.
+
+	return app
+}

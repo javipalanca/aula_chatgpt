@@ -30,6 +30,7 @@ Checklist global (estado)
 - [x] Fase 3 — Implementar `WSManager` (implementado y conectado en `server/index.js`)
 - [x] Checkpoint — lint/tests/smoke (lint: PASS; unit tests: añadidos; ejecutar suite localmente para validación final)
 - [~] Fase 4 — Mover rutas a controllers (HTTP) (pendiente)
+ - [~] Fase 4 — Mover rutas a controllers (HTTP) (en progreso: participants + answers extraídos)
 - [~] Fase 5 — `QuestionService` (scoring/reveal) (servicio creado; handler/reveal migration partially pending)
 - [ ] Fase 6 — Frontend: extraer lógica TeacherDashboard a hook/service
 - [ ] Fase 7 — Cleanup, docs y cierre
@@ -195,9 +196,10 @@ Checkpoint (tras Fases 0-3)
 Fase 4 — Controllers HTTP
 - Objetivo: mover lógica de rutas a `server/controllers/*` y montar routers en `server/app.js`.
 - Tareas:
-  - [ ] Crear controllers para classes, participants, challenges, answers, diagnosis, llm.
-  - [ ] Actualizar `server/app.js` para montar routers.
-  - [ ] Tests de integración (`supertest`) para rutas críticas (`/api/answers`, `/api/questions/:id/reveal`, `/api/evaluate`).
+  - [x] Crear controllers para `participants` y `answers` (implementados: `server/controllers/participants.js`, `server/controllers/answers.js`).
+  - [x] Actualizar `server/app.js` para exponer una fábrica `createApp(deps)` que monta controllers inyectados.
+  - [~] Tests de integración (`supertest`) para rutas críticas (`/api/answers`, `/api/questions/:id/reveal`, `/api/evaluate`) — pendientes.
+  - [~] Pendiente: extraer controllers adicionales (classes, challenges, diagnosis, llm) en PRs subsiguientes.
 
  Fase 5 — QuestionService (lógica pura)
  - Objetivo: encapsular scoring y reveal.
