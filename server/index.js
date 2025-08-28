@@ -417,9 +417,27 @@ try {
       try {
         const active = activeQuestions.get(payload.classId)
         const questionPayload = (active && active.question && active.question.payload) ? active.question.payload : {}
-        const evalMode = (questionPayload && typeof questionPayload.evaluation === 'string') ? questionPayload.evaluation : 'mcq'
-        if (evalMode === 'open' || evalMode === 'prompt') {
-          // do nothing
+        const evalMode = (questionPayload && typeof questionPayload.evaluation === 'string') ? questionPayload.evaluation : ((questionPayload && (questionPayload.source === 'BAD_PROMPTS' || questionPayload.source === 'PROMPTS')) ? 'prompt' : 'mcq')
+        // If client sent an evaluation (HTTP fallback from submitEvaluatedAnswer), attach it, award points and broadcast
+        if (payload.evaluation && (evalMode === 'open' || evalMode === 'prompt')) {
+          try {
+            // normalize client score (accept 0..1 or 1..100)
+            const rawClientScore = Number(payload.evaluation.score || 0)
+            const scoreFraction = Math.max(0, Math.min(1, (rawClientScore > 1 ? rawClientScore / 100 : rawClientScore)))
+            const feedback = payload.evaluation.feedback || ''
+            const answerTs = doc.created_at ? (new Date(doc.created_at)).getTime() : Date.now()
+            const totalDurationSec = (active && active.question && Number(active.question.duration)) ? Number(active.question.duration) : 30
+            const startedAt = (active && active.startedAt) ? active.startedAt : (answerTs - (totalDurationSec * 1000))
+            const timeTakenMs = Math.max(0, answerTs - startedAt)
+            const percent = Math.min(1, timeTakenMs / (totalDurationSec * 1000))
+            const points = (questionPayload && Number(questionPayload.points)) ? Number(questionPayload.points) : 100
+            const awarded = Math.round((Number(points) || 0) * scoreFraction * Math.max(0, 1 - percent))
+            if (awarded > 0) await participants.updateOne({ classId: payload.classId, sessionId: payload.sessionId }, { $inc: { score: awarded }, $set: { lastSeen: new Date() } }, { upsert: true })
+            // attach evaluation to answer doc
+            try { await answers.replaceOne({ id }, { ...doc, evaluation: { score: scoreFraction, feedback, awardedPoints: awarded, evaluatedAt: new Date(), source: 'client' } }, { upsert: true }) } catch(e) { console.warn('attach client evaluation to answer failed (http)', e) }
+            // broadcast answer-evaluated so teachers receive it immediately
+            try { broadcast({ type: 'answer-evaluated', classId: payload.classId, questionId: payload.questionId, sessionId: payload.sessionId, score: scoreFraction, feedback, awardedPoints: awarded, source: 'client' }, payload.classId) } catch(e) { console.warn('broadcast answer-evaluated failed (http)', e) }
+          } catch(e) { console.warn('handle client evaluation (http) failed', e) }
         }
       } catch(e) { console.warn('submit evaluation logic failed', e) }
 
@@ -503,7 +521,9 @@ try {
             try {
               const answerText = Array.isArray(a.answer) ? a.answer.join(', ') : String(a.answer || '')
               const evalRes = await evaluateAnswerWithLLM(payload, answerText)
-              const scoreFraction = typeof evalRes.score === 'number' ? Math.max(0, Math.min(1, evalRes.score)) : 0
+              // evalRes.score may be 0..1 or 1..100; normalize to 0..1
+              const _rawScore = (typeof evalRes.score === 'number') ? evalRes.score : Number(evalRes.score || 0)
+              const scoreFraction = (typeof _rawScore === 'number' && !isNaN(_rawScore)) ? Math.max(0, Math.min(1, (_rawScore > 1 ? _rawScore / 100 : _rawScore))) : 0
               const answerTs = a.created_at ? (new Date(a.created_at)).getTime() : Date.now()
               const startedAt = (active && active.startedAt) ? active.startedAt : (answerTs - (totalDurationSec * 1000))
               const timeTakenMs = Math.max(0, answerTs - startedAt)
@@ -877,7 +897,9 @@ try {
                 if (evalMode === 'open' || evalMode === 'prompt') {
                   try {
                     if (payload.evaluation && typeof payload.evaluation.score === 'number') {
-                      const scoreFraction = Math.max(0, Math.min(1, Number(payload.evaluation.score)))
+                      // Accept client-provided score as either 0..1 or 1..100
+                      const rawClientScore = Number(payload.evaluation.score)
+                      const scoreFraction = Math.max(0, Math.min(1, (rawClientScore > 1 ? rawClientScore / 100 : rawClientScore)))
                       const feedback = payload.evaluation.feedback || ''
                       const answerTs = doc.created_at ? (new Date(doc.created_at)).getTime() : Date.now()
                       const startedAt = (active && active.startedAt) ? active.startedAt : (answerTs - (totalDurationSec * 1000))
@@ -891,7 +913,8 @@ try {
                     } else {
                       const answerText = Array.isArray(payload.answer) ? payload.answer.join(', ') : String(payload.answer || '')
                       const evalRes = await evaluateAnswerWithLLM(questionPayload, answerText)
-                      const scoreFraction = typeof evalRes.score === 'number' ? Math.max(0, Math.min(1, evalRes.score)) : 0
+                      const _rawScore2 = (typeof evalRes.score === 'number') ? evalRes.score : Number(evalRes.score || 0)
+                      const scoreFraction = (typeof _rawScore2 === 'number' && !isNaN(_rawScore2)) ? Math.max(0, Math.min(1, (_rawScore2 > 1 ? _rawScore2 / 100 : _rawScore2))) : 0
                       const answerTs = doc.created_at ? (new Date(doc.created_at)).getTime() : Date.now()
                       const startedAt = (active && active.startedAt) ? active.startedAt : (answerTs - (totalDurationSec * 1000))
                       const timeTakenMs = Math.max(0, answerTs - startedAt)
@@ -1004,7 +1027,8 @@ try {
                       try {
                         const answerText = Array.isArray(a.answer) ? a.answer.join(', ') : String(a.answer || '')
                         const evalRes = await evaluateAnswerWithLLM(payload, answerText)
-                        const scoreFraction = typeof evalRes.score === 'number' ? Math.max(0, Math.min(1, evalRes.score)) : 0
+                        const _rawScore3 = (typeof evalRes.score === 'number') ? evalRes.score : Number(evalRes.score || 0)
+                        const scoreFraction = (typeof _rawScore3 === 'number' && !isNaN(_rawScore3)) ? Math.max(0, Math.min(1, (_rawScore3 > 1 ? _rawScore3 / 100 : _rawScore3))) : 0
                         const answerTs = a.created_at ? (new Date(a.created_at)).getTime() : Date.now()
                         const startedAt = (active && active.startedAt) ? active.startedAt : (answerTs - (totalDurationSec * 1000))
                         const timeTakenMs = Math.max(0, answerTs - startedAt)

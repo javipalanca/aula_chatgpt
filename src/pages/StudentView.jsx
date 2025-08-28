@@ -167,10 +167,14 @@ export default function StudentView({ classCode, displayName, onBack }) {
   }
 
   const handleEvaluation = useCallback((evaluation) => {
-    // Award points based on the evaluation score
-    const score = Math.max(1, Math.min(100, Number(evaluation.score)))
-    const points = (currentQuestion.payload && Number(currentQuestion.payload.points)) ? Number(currentQuestion.payload.points) : 100
-    const awarded = Math.round((Number(points) || 0) * (score / 100))
+  // Award points based on the evaluation score.
+  // Accept evaluation.score as either 0..1 or 1..100 and normalize.
+  let raw = Number(evaluation.score || 0)
+  if (isNaN(raw)) raw = 0
+  const fraction = raw > 1 ? Math.max(0, Math.min(1, raw / 100)) : Math.max(0, Math.min(1, raw))
+  const score = Math.max(1, Math.min(100, Math.round(fraction * 100)))
+  const points = (currentQuestion && currentQuestion.payload && Number(currentQuestion.payload.points)) ? Number(currentQuestion.payload.points) : 100
+  const awarded = Math.round((Number(points) || 0) * (fraction))
     if (awarded > 0) {
       // Update the local score
       setScore(s => s + awarded)
@@ -184,7 +188,7 @@ export default function StudentView({ classCode, displayName, onBack }) {
         })
       } catch (e) { console.warn('score update failed', e) }
     }
-    setDisplayedEvaluationResult({ score, feedback: evaluation.feedback, awardedPoints: awarded });
+  setDisplayedEvaluationResult({ score, feedback: evaluation.feedback, awardedPoints: awarded });
   }, [currentQuestion, classCode]);
 
   return (
@@ -284,6 +288,12 @@ export default function StudentView({ classCode, displayName, onBack }) {
                 </div>
                 {submittedPrompt && (
                   <div className="mt-3 text-sm opacity-70 text-left">Tu envío: <div className="mt-1 p-2 rounded bg-white/5">{submittedPrompt}</div></div>
+                )}
+
+                {/* Trigger automatic LLM evaluation and submission to server. ChatGPT component
+                    calls /api/evaluate and then submitEvaluatedAnswer; onEvaluated updates UI. */}
+                {promptSubmitted && submittedPrompt && (
+                  <ChatGPT question={currentQuestion} answer={submittedPrompt} onEvaluated={handleEvaluation} />
                 )}
                 {displayedEvaluationResult && (
                   <div className="mt-3 text-left">
