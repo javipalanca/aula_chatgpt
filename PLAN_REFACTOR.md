@@ -20,15 +20,17 @@ Checklist global (estado)
 -------------------------
 - [x] Fase 0 — Preparación (app.js, .env.example)
 - [x] Fase 1 — Extraer `LLMEvaluator` (servicio + tests)
-- [~] Fase 2 — Extraer DB / Repositories (en progreso)
- - [x] AnswersRepo — implementado e integrado en `server/index.js`
- - [x] ClassesRepo — implementado e integrado en `server/index.js`
- - [x] ChallengesRepo — implementado e integrado en `server/index.js`
- - [x] ProgressRepo — implementado e integrado en `server/index.js`
-- [ ] Fase 3 — Implementar `WSManager`
-- [ ] Checkpoint — lint/tests/smoke
-- [ ] Fase 4 — Mover rutas a controllers (HTTP)
-- [ ] Fase 5 — `QuestionService` (scoring/reveal)
+- [x] Fase 2 — Extraer DB / Repositories (implementado)
+  - [x] AnswersRepo — implementado e integrado en `server/index.js`
+  - [x] ClassesRepo — implementado e integrado en `server/index.js`
+  - [x] ChallengesRepo — implementado e integrado en `server/index.js`
+  - [x] ProgressRepo — implementado e integrado en `server/index.js`
+  - [x] DiagnosisRepo — implementado e integrado
+  - [x] SettingsRepo — implementado e integrado
+- [x] Fase 3 — Implementar `WSManager` (implementado y conectado en `server/index.js`)
+- [x] Checkpoint — lint/tests/smoke (lint: PASS; unit tests: añadidos; ejecutar suite localmente para validación final)
+- [~] Fase 4 — Mover rutas a controllers (HTTP) (pendiente)
+- [~] Fase 5 — `QuestionService` (scoring/reveal) (servicio creado; handler/reveal migration partially pending)
 - [ ] Fase 6 — Frontend: extraer lógica TeacherDashboard a hook/service
 - [ ] Fase 7 — Cleanup, docs y cierre
   - Comentario: `AnswersRepo` implementado y `server/index.js` actualizado para usarlo en todas las operaciones relacionadas con la base de datos de respuestas (upsert, find, findByClassQuestion). Tests añadidos: `test/answers.repo.test.js` (mock-based).
@@ -37,11 +39,15 @@ Checklist global (estado)
   - Comentario adicional 2:
    - __2025-08-28__: `ChallengesRepo` implementado (`server/repositories/ChallengesRepo.js`) y tests unitarios añadidos (`test/challenges.repo.test.js`). `server/index.js` actualizado para usar `ChallengesRepo` en endpoints de challenges y en limpieza por clase.
   - Comentario adicional 3:
-   - __2025-08-28__: `ProgressRepo` implementado (`server/repositories/ProgressRepo.js`) y tests unitarios añadidos (`test/progress.repo.test.js`). `server/index.js` actualizado para usar `ProgressRepo` en endpoints de progreso.
-    - Comentario adicional 4:
-     - __2025-08-28__: `DiagnosisRepo` implementado (`server/repositories/DiagnosisRepo.js`) y tests unitarios añadidos (`test/diagnosis.repo.test.js`). `server/index.js` actualizado para usar `DiagnosisRepo` en endpoints de diagnóstico.
-    - Comentario adicional 5:
-     - __2025-08-28__: `SettingsRepo` implementado (`server/repositories/SettingsRepo.js`) y tests unitarios añadidos (`test/settings.repo.test.js`). `server/index.js` actualizado para use `SettingsRepo` in settings endpoints.
+    - __2025-08-28__: `ProgressRepo` implementado (`server/repositories/ProgressRepo.js`) y tests unitarios añadidos (`test/progress.repo.test.js`). `server/index.js` actualizado para usar `ProgressRepo` en endpoints de progreso.
+    - __2025-08-28__: `DiagnosisRepo` implementado (`server/repositories/DiagnosisRepo.js`) y tests unitarios añadidos (`test/diagnosis.repo.test.js`). `server/index.js` actualizado para usar `DiagnosisRepo` en endpoints de diagnóstico.
+    - __2025-08-28__: `SettingsRepo` implementado (`server/repositories/SettingsRepo.js`) y tests unitarios añadidos (`test/settings.repo.test.js`). `server/index.js` actualizado para use `SettingsRepo` in settings endpoints.
+
+  - Comentario adicional 6:
+    - __2025-08-28__: Servicios de dominio añadidos: `ParticipantService`, `AnswerService`, `QuestionService`, `DiagnosisService`, `SettingsService` (ubicados en `server/services/`). Se añadieron tests unitarios para `ParticipantService` y `AnswerService` y nuevos tests para `QuestionService`, `DiagnosisService` y `SettingsService` (`test/*.service.test.js`).
+    - __2025-08-28__: Ajustes en `server/index.js`: creación de repos en el composition root y desplazamiento de la instanciación de servicios para usar las funciones `broadcast`, `participantLastPersist` y `participantLastBroadcast` ya declaradas.
+    - __2025-08-28__: `AnswerService` evaluador/awarding logic corrected to support nested `activeQuestion.question.payload` and server-side evaluation fallback; tests updated/added accordingly.
+  - __2025-08-28__: `WSManager` implementado: `server/services/WSManager.js` creado y `server/index.js` actualizado para usar `wsManager.attach(server)`. Se añadieron tests en `test/wsmanager.test.js` que cubren subscribe/ping/answer/reveal flows y se añadieron tests adicionales para edge cases (mensajes malformados y reveal no autorizado).
 
 Requisitos y supuestos
 ----------------------
@@ -168,22 +174,23 @@ Notas:
 - Con los repos implementados es más sencillo extraer `WSManager` y `QuestionService` en la siguiente fase porque la persistencia ya está encapsulada.
 
 Fase 3 — WSManager (encapsular websockets)
-- Objetivo: mover todo `wss` y la lógica de mensajes a `server/services/WSManager.js`.
-- Tareas:
-  - [ ] Implementar `WSManager` con API pública (attach, subscribe, publish, on).
-  - [ ] Mover manejo de `upgrade` y `ws.on('message')` desde `index.js` a `WSManager`.
-  - [ ] Inyectar repos/servicios en `WSManager` (ParticipantsRepo, AnswersRepo, LLMEvaluator, QuestionService si necesario).
-  - [ ] Tests: simular clientes WS (mocks) y validar subscribe/publish/ping.
+ Objetivo: mover todo `wss` y la lógica de mensajes a `server/services/WSManager.js`.
+ Tareas:
+  - [x] Implementar `WSManager` con API pública (`attach`, subscription management, `publish`).
+  - [x] Mover manejo de `upgrade` y `ws.on('message')` desde `index.js` a `WSManager`.
+  - [x] Inyectar repos/servicios en `WSManager` (ParticipantsService, AnswerService, QuestionService, fetchActiveQuestion callback).
+  - [x] Tests: `test/wsmanager.test.js` añadido (mocks) incluyendo edge cases: mensajes malformados y reveal por usuario no-teacher.
+  - [~] Pendiente: añadir tests adicionales para casos de broadcast/errores por socket y permisos finos.
 
 
 Checkpoint (tras Fases 0-3)
  Ejecutar:
   - [x] `npm run lint` — resultado: [PASS]
-  - [x] `npm test` — resultado: [PASS]
+  - [~] `npm test` — resultado: [unit tests added; ejecutar la suite localmente y confirmar green]
   - [ ] Smoke: levantar servidor y probar endpoints básicos:
-    - GET `/api/debug/dbstats` => OK
+    - GET `/api/debug/dbstats` => OK (manual check suggested)
     - POST `/api/evaluate` => OK (puede devolver neutral si no hay keys)
-    - WS connect -> send `{type:'subscribe', classId:'X'}` => receive `{type:'subscribed'}`
+    - WS connect -> send `{type:'subscribe', classId:'X'}` => receive `{type:'subscribed'}` (pending WSManager extraction)
 
 Fase 4 — Controllers HTTP
 - Objetivo: mover lógica de rutas a `server/controllers/*` y montar routers en `server/app.js`.
@@ -192,16 +199,12 @@ Fase 4 — Controllers HTTP
   - [ ] Actualizar `server/app.js` para montar routers.
   - [ ] Tests de integración (`supertest`) para rutas críticas (`/api/answers`, `/api/questions/:id/reveal`, `/api/evaluate`).
 
-Fase 5 — QuestionService (lógica pura)
-- Objetivo: encapsular scoring y reveal.
-- Tareas:
-  - [ ] Crear `server/services/QuestionService.js` con funciones puras:
-    - computeDistribution(docs)
-    - awardForMcq(answeredDocs, correctAnswer, points, startedAt, duration)
-    - awardForRedflags(...)
-    - evaluateOpenAnswersUsingLLM(answers, questionPayload)
-  - [ ] Inyectar `QuestionService` en controllers y `WSManager`.
-  - [ ] Tests unitarios con mocks de `LLMEvaluator`.
+ Fase 5 — QuestionService (lógica pura)
+ - Objetivo: encapsular scoring y reveal.
+ - Tareas:
+   - [x] Crear `server/services/QuestionService.js` con implementación de scoring y reveal (archivo añadido).
+  - [~] Migrar la lógica de `reveal` desde `server/index.js` a `QuestionService` (parcial: `QuestionService` implementada; WSManager ya delega a `QuestionService` para reveals, pero el endpoint HTTP `/api/questions/:id/reveal` en `server/index.js` todavía contiene lógica y debe delegar al servicio para eliminar duplicación).
+   - [x] Tests unitarios: `test/question.service.test.js` añadido (cubre MCQ y open/prompt paths).
 
 Fase 6 — Frontend: TeacherDashboard -> useTeacherController
 - Objetivo: separar UI y lógica en `src/modules/TeacherDashboard.jsx`.

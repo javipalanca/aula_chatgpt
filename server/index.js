@@ -11,10 +11,12 @@ import ChallengesRepo from './repositories/ChallengesRepo.js'
 import ProgressRepo from './repositories/ProgressRepo.js'
 import DiagnosisRepo from './repositories/DiagnosisRepo.js'
 import SettingsRepo from './repositories/SettingsRepo.js'
-import { WebSocketServer } from 'ws'
+// ws handled by WSManager
 import LLMEvaluator from './services/LLMEvaluator.js'
 import ParticipantService from './services/ParticipantService.js'
 import AnswerService from './services/AnswerService.js'
+import QuestionService from './services/QuestionService.js'
+import WSManager from './services/WSManager.js'
 
 const MONGO_URI = process.env.MONGO_URI || ''
 const MONGO_DB = process.env.MONGO_DB || 'aula_chatgpt'
@@ -54,15 +56,13 @@ try {
   // (done below) so we defer their creation until those helpers exist.
 
   // Helper placeholder for fetchConnectedParticipants; actual binding will be set after services are created
-  let fetchConnectedParticipants = async (classId, opts = {}) => { throw new Error('participant service not initialized') }
+  let fetchConnectedParticipants = async (classId, _opts = {}) => { throw new Error('participant service not initialized') }
 
   // WebSocket server for real-time updates
-  const wss = new WebSocketServer({ noServer: true })
   const wsClients = new Set()
   // classId -> Set(ws)
   const classSubs = new Map()
   // ws -> Set(classId)
-  const wsToClasses = new Map()
   // classId -> { question: publicQuestion, startedAt: timestamp }
   const activeQuestions = new Map()
   // In-memory cooldown map to avoid frequent writes for participant lastSeen updates
@@ -575,242 +575,12 @@ try {
       return res.json({ ok: true, counts })
     } catch (err) { return res.status(500).json({ ok: false, error: String(err) }) }
   })
-  // Attach ws upgrade handler to the HTTP server
+  // Attach ws upgrade handler to the HTTP server (delegated to WSManager)
   const server = app.listen(PORT, () => console.log('Aula proxy server listening on', PORT))
-  server.on('upgrade', (request, socket, head) => {
-    wss.handleUpgrade(request, socket, head, (ws) => {
-      wsClients.add(ws)
-      ws.on('close', () => wsClients.delete(ws))
-      ws.on('message', async (msg) => {
-        // Attempt to parse message and avoid noisy heartbeat logs (ping/participant-heartbeat)
-        let parsedObj = null
-        try { parsedObj = JSON.parse(String(msg)) } catch (e) { /* keep raw if not json */ }
-        const isHeartbeat = parsedObj && (parsedObj.type === 'ping' || parsedObj.type === 'participant-heartbeat' || parsedObj.type === 'participant-disconnected')
-        if (!isHeartbeat) {
-          try { console.debug('WS recv raw', { raw: String(msg).slice(0,200), sessionId: ws._sessionId || null, role: ws._role || null }) } catch(e) { /* ignore */ }
-          try { console.debug('WS recv parsed preview', String(msg).slice(0,1000)) } catch(e) { /* ignore */ }
-        }
-        // allow clients to send pings or subscribe messages if needed
-        try {
-          const obj = parsedObj || JSON.parse(String(msg))
-          if (!isHeartbeat) {
-            try { console.debug('WS recv obj', { type: obj && obj.type, classId: obj && obj.classId, sessionId: obj && obj.sessionId }) } catch(e) { /* ignore */ }
-          }
-      if (obj && obj.type === 'subscribe' && obj.classId) {
-            const cid = obj.classId
-            // If client provided a sessionId, associate it with this ws so we can detect disconnects
-            const sessionId = obj.sessionId || null
-            const role = obj.role || 'student'
-            // add ws to wsClients
-            wsClients.add(ws)
-            // add to classSubs
-            if (!classSubs.has(cid)) classSubs.set(cid, new Set())
-            classSubs.get(cid).add(ws)
-            // track reverse mapping
-            if (!wsToClasses.has(ws)) wsToClasses.set(ws, new Set())
-            wsToClasses.get(ws).add(cid)
-            // record sessionId on the ws object for later disconnect tracking
-            try { if (sessionId) ws._sessionId = sessionId } catch(e) { console.warn('assign sessionId to ws failed', e) }
-            // record role for permission checks
-            try { ws._role = role } catch(e) { /* ignore */ }
-            // If subscriber is a student: delegate to participantService to mark connected and broadcast
-            try {
-              if (sessionId && role === 'student') {
-                await participantService.handleSubscribe({ classId: cid, sessionId, role, displayName: obj && obj.displayName })
-              }
-            } catch (e) { console.warn('subscribe participant update failed', e) }
-            // ack
-                try { ws.send(JSON.stringify({ type: 'subscribed', classId: cid, role })) } catch(e) { console.warn('ack send failed', e) }
-            // If there is an active question for this class and this is a student, send it with remaining time
-            try {
-              const active = activeQuestions.get(cid)
-              if (role === 'student' && active && active.question) {
-                const q = { ...active.question }
-                // compute remaining seconds based on stored startedAt and declared duration
-                const totalDuration = (q.duration && Number(q.duration)) ? Number(q.duration) : 30
-                const elapsed = Math.floor((Date.now() - (active.startedAt || Date.now()))/1000)
-                const remaining = Math.max(0, totalDuration - elapsed)
-                // include remaining in the sent question object
-                q.duration = remaining
-                try { ws.send(JSON.stringify({ type: 'question-launched', classId: cid, question: q })) } catch(e) { console.warn('send active question failed to ws', e) }
-              }
-            } catch(e) { console.warn('send active question failed', e) }
-            return
-          }
-          // handle heartbeat pings from clients over WS so we can mark them connected
-          if (obj && obj.type === 'ping' && obj.classId && obj.sessionId) {
-            const cid = obj.classId
-            const sid = obj.sessionId
-            try {
-              await participantService.handlePing(cid, sid)
-            } catch (e) { console.warn('ping handling failed', e) }
-            return
-          }
-
-          // allow students to submit answers over WS (mirror of POST /api/answers)
-          if (obj && obj.type === 'answer' && obj.classId && obj.sessionId && obj.questionId) {
-            try {
-              const payload = obj || {}
-              try { console.info('WS answer submit received', { classId: payload.classId, questionId: payload.questionId, sessionId: payload.sessionId, preview: String(payload.answer).slice(0,200) }) } catch(e) { /* ignore */ }
-              const active = activeQuestions.get(payload.classId)
-              try {
-                await answerService.submitAnswer({ classId: payload.classId, sessionId: payload.sessionId, questionId: payload.questionId, answer: payload.answer, evaluation: payload.evaluation, activeQuestion: active ? { question: active.question, startedAt: active.startedAt } : null })
-              } catch (e) { console.error('answers WS handling error', e) }
-            } catch (err) { console.error('answers WS handling error', err) }
-            return
-          }
-          // ignore other messages for now
-          // allow explicit unsubscribe so clients can leave a class without closing the socket
-          if (obj && obj.type === 'unsubscribe' && obj.classId) {
-            const cid = obj.classId
-            const sessionId = obj.sessionId || null
-            try {
-              const set = classSubs.get(cid)
-              if (set) set.delete(ws)
-              const wsSet = wsToClasses.get(ws)
-              if (wsSet) {
-                wsSet.delete(cid)
-                if (wsSet.size === 0) wsToClasses.delete(ws)
-              }
-              if (sessionId) {
-                try { await participantService.handleDisconnect(cid, sessionId) } catch (e) { /* ignore */ }
-              }
-            } catch (e) { console.warn('unsubscribe handling failed', e) }
-            return
-          }
-          // allow teacher to trigger reveal via websocket (so students get immediate order)
-          if (obj && obj.type === 'reveal' && obj.classId && obj.questionId && typeof obj.correctAnswer !== 'undefined') {
-            try {
-              // only allow ws with role teacher to reveal
-              if (ws._role !== 'teacher') {
-                try { ws.send(JSON.stringify({ type: 'error', message: 'forbidden' })) } catch(e) { /* ignore */ }
-                return
-              }
-              const classId = obj.classId
-              const questionId = obj.questionId
-              const correctAnswer = obj.correctAnswer
-              const points = obj.points || 100
-              // compute distribution
-              const docs = await answersRepo.findByClassQuestion(classId, questionId)
-              const distribution = {}
-              const correctSessions = []
-              for (const a of docs) {
-                const key = a.answer == null ? '': String(a.answer)
-                distribution[key] = (distribution[key]||0) + 1
-                if (String(a.answer) === String(correctAnswer)) correctSessions.push(a.sessionId)
-              }
-              // Update scores for correct sessions with time-based decay or different eval modes
-              try {
-                let evaluations = []
-                const active = activeQuestions.get(classId)
-                const totalDurationSec = (active && active.question && Number(active.question.duration)) ? Number(active.question.duration) : 30
-                const payload = (active && active.question && active.question.payload) ? active.question.payload : {}
-                // Prefer explicit evaluation mode declared on the question payload; fallback to 'mcq'
-                const evalMode = (payload && typeof payload.evaluation === 'string') ? payload.evaluation : ((payload && (payload.source === 'BAD_PROMPTS' || payload.source === 'PROMPTS')) ? 'prompt' : 'mcq')
-
-                if (evalMode === 'mcq') {
-                  for (const a of docs) {
-                    if (String(a.answer) === String(correctAnswer)) {
-                      try {
-                        const answerTs = a.created_at ? (new Date(a.created_at)).getTime() : Date.now()
-                        const startedAt = (active && active.startedAt) ? active.startedAt : (answerTs - (totalDurationSec * 1000))
-                        const timeTakenMs = Math.max(0, answerTs - startedAt)
-                        const percent = Math.min(1, timeTakenMs / (totalDurationSec * 1000))
-                        const award = Math.round((Number(points) || 0) * Math.max(0, 1 - percent))
-                        if (award > 0) await participantsRepo.incScore(classId, a.sessionId, award)
-                      } catch(e) { console.error('score update failed in ws reveal', e) }
-                    }
-                  }
-                } else if (evalMode === 'redflags') {
-                  const expected = Array.isArray(correctAnswer) ? correctAnswer.map(String) : []
-                  const expectedCount = expected.length || 1
-                  for (const a of docs) {
-                    try {
-                      let ansArr = []
-                      if (Array.isArray(a.answer)) ansArr = a.answer.map(String)
-                      else if (typeof a.answer !== 'undefined' && a.answer !== null) ansArr = [String(a.answer)]
-                      const matches = ansArr.filter(x => expected.includes(String(x))).length
-                      const fraction = Math.max(0, Math.min(1, matches / expectedCount))
-                      const answerTs = a.created_at ? (new Date(a.created_at)).getTime() : Date.now()
-                      const startedAt = (active && active.startedAt) ? active.startedAt : (answerTs - (totalDurationSec * 1000))
-                      const timeTakenMs = Math.max(0, answerTs - startedAt)
-                      const percent = Math.min(1, timeTakenMs / (totalDurationSec * 1000))
-                      const award = Math.round((Number(points) || 0) * fraction * Math.max(0, 1 - percent))
-                      if (award > 0) await participantsRepo.incScore(classId, a.sessionId, award)
-                    } catch(e) { console.error('redflags score update failed in ws reveal', e) }
-                  }
-                } else if (evalMode === 'open' || evalMode === 'prompt') {
-                  // Evaluate open answers automatically via LLM and award points based on evaluator score
-                  try {
-                    const evals = []
-                    for (const a of docs) {
-                      try {
-                        const answerText = Array.isArray(a.answer) ? a.answer.join(', ') : String(a.answer || '')
-                        const evalRes = await evaluateAnswerWithLLM(payload, answerText)
-                        const _rawScore3 = (typeof evalRes.score === 'number') ? evalRes.score : Number(evalRes.score || 0)
-                        const scoreFraction = (typeof _rawScore3 === 'number' && !isNaN(_rawScore3)) ? Math.max(0, Math.min(1, (_rawScore3 > 1 ? _rawScore3 / 100 : _rawScore3))) : 0
-                        const answerTs = a.created_at ? (new Date(a.created_at)).getTime() : Date.now()
-                        const startedAt = (active && active.startedAt) ? active.startedAt : (answerTs - (totalDurationSec * 1000))
-                        const timeTakenMs = Math.max(0, answerTs - startedAt)
-                        const percent = Math.min(1, timeTakenMs / (totalDurationSec * 1000))
-                        const awarded = Math.round((Number(points) || 0) * scoreFraction * Math.max(0, 1 - percent))
-                        if (awarded > 0) await participantsRepo.incScore(classId, a.sessionId, awarded)
-                        evals.push({ sessionId: a.sessionId, score: scoreFraction, feedback: evalRes.feedback || '', awardedPoints: awarded })
-                      } catch (e) { console.error('LLM eval failed (ws) for', a.sessionId, e); evals.push({ sessionId: a.sessionId, score: 0, feedback: 'error', awardedPoints: 0 }) }
-                    }
-                    // attach evaluations to broadcast payload
-                    if (!Array.isArray(evaluations)) evaluations = []
-                    evaluations = evaluations.concat(evals)
-                  } catch(e) { console.error('ws open eval batch failed', e) }
-                }
-              } catch(e) { console.error('ws score update batch failed', e) }
-              // Fetch updated participants (include disconnected for response) — we return it in HTTP reveal, keep here for parity
-              await fetchConnectedParticipants(classId, { includeDisconnected: true })
-              // Broadcast results and participants update
-              try {
-                const answersListWs = docs.map(a => ({ sessionId: a.sessionId, answer: a.answer, created_at: a.created_at }))
-                const payload = { type: 'question-results', classId, questionId, distribution, correctSessions, correctAnswer }
-                try {
-                  const active = activeQuestions.get(classId)
-                  const payloadMeta = (active && active.question && active.question.payload) ? active.question.payload : {}
-                  const evalMode = (payloadMeta && typeof payloadMeta.evaluation === 'string') ? payloadMeta.evaluation : 'mcq'
-                  if (evalMode === 'open' || evalMode === 'prompt') payload.answers = answersListWs
-                } catch (e) { /* ignore */ }
-                broadcast(payload, classId)
-              } catch(e) { console.warn('broadcast question-results failed (ws reveal)', e) }
-              try {
-                const connected = await fetchConnectedParticipants(classId)
-                broadcast({ type: 'participants-updated', classId, participants: connected }, classId)
-              } catch(e) { console.warn('broadcast participants-updated failed (ws reveal)', e) }
-              try { activeQuestions.delete(classId) } catch(e) { console.warn('activeQuestions delete failed (ws reveal)', e) }
-              return
-            } catch (e) { console.warn('ws reveal handling failed', e); return }
-          }
-        } catch(e) { console.warn('invalid ws message', e) }
-      })
-        ws.on('close', async () => {
-        // cleanup any class subscriptions
-        const set = wsToClasses.get(ws)
-        if (set) {
-          for (const cid of set) {
-            const s = classSubs.get(cid)
-            if (s) s.delete(ws)
-            if (s && s.size === 0) classSubs.delete(cid)
-            // if this ws had a sessionId, mark participant as disconnected and notify
-            try {
-              const sid = ws._sessionId || null
-              if (sid) {
-                // Delegate disconnect handling to participantService (which will mark disconnected and broadcast)
-                try { await participantService.handleDisconnect(cid, sid) } catch (e) { console.warn('handleDisconnect failed on ws close', e) }
-              }
-            } catch(e) { console.warn('close handler participant update failed', e) }
-          }
-          wsToClasses.delete(ws)
-        }
-        wsClients.delete(ws)
-      })
-    })
-  })
+  // instantiate WSManager and attach
+  const questionService = new QuestionService({ answersRepo, participantsRepo, evaluator: llmEvaluator, broadcast })
+  const wsManager = new WSManager({ participantsService: participantService, answerService, questionService, fetchActiveQuestion: async (cid) => activeQuestions.get(cid) })
+  wsManager.attach(server)
 } catch (err) {
   console.error(err)
   process.exit(1)
