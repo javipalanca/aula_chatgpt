@@ -7,6 +7,7 @@ describe('WSManager', () => {
   let questionService
   let fetchActiveQuestion
   let svc
+  let broadcastService
 
   beforeEach(() => {
     participantsService = {
@@ -17,7 +18,56 @@ describe('WSManager', () => {
     answerService = { submitAnswer: vi.fn().mockResolvedValue(true) }
     questionService = { revealQuestion: vi.fn().mockResolvedValue(true) }
     fetchActiveQuestion = vi.fn().mockResolvedValue(null)
-    svc = new WSManager({ participantsService, answerService, questionService, fetchActiveQuestion })
+    // simple in-memory mock of the BroadcastService that the WSManager now uses
+    broadcastService = {
+      wsClients: new Set(),
+      classSubs: new Map(),
+      wsToClasses: new Map(),
+      logger: { warn: () => {} },
+      registerClient(ws) { this.wsClients.add(ws) },
+      unregisterClient(ws) {
+        const set = this.wsToClasses.get(ws)
+        if (set) {
+          for (const cid of set) {
+            const s = this.classSubs.get(cid)
+            if (s) s.delete(ws)
+            if (s && s.size === 0) this.classSubs.delete(cid)
+          }
+          this.wsToClasses.delete(ws)
+        }
+        this.wsClients.delete(ws)
+      },
+      subscribe(ws, classId) {
+        if (!this.classSubs.has(classId)) this.classSubs.set(classId, new Set())
+        this.classSubs.get(classId).add(ws)
+        if (!this.wsToClasses.has(ws)) this.wsToClasses.set(ws, new Set())
+        this.wsToClasses.get(ws).add(classId)
+      },
+      unsubscribe(ws, classId) {
+        const set = this.classSubs.get(classId)
+        if (set) set.delete(ws)
+        const wsSet = this.wsToClasses.get(ws)
+        if (wsSet) {
+          wsSet.delete(classId)
+          if (wsSet.size === 0) this.wsToClasses.delete(ws)
+        }
+      },
+      publish(_type, payload, targetClassId) {
+        const raw = JSON.stringify(payload)
+        let targets = []
+        if (targetClassId) {
+          const set = this.classSubs.get(targetClassId)
+          if (set && set.size) targets = Array.from(set)
+        } else {
+          targets = Array.from(this.wsClients)
+        }
+        for (const s of targets) {
+          try { s.send(raw) } catch (e) { try { this.logger.warn(e) } catch (er) { /* ignore */ } }
+        }
+      }
+    }
+
+    svc = new WSManager({ participantsService, answerService, questionService, fetchActiveQuestion, broadcastService })
   })
 
   it('subscribe acknowledges and calls participantService.handleSubscribe', async () => {
@@ -71,39 +121,39 @@ describe('WSManager', () => {
     const wsA = { send: vi.fn() }
     const wsB = { send: vi.fn() }
     const wsC = { send: vi.fn() }
-    // register clients and class subscribers
-    svc.wsClients.add(wsA)
-    svc.wsClients.add(wsB)
-    svc.wsClients.add(wsC)
-    svc.classSubs.set('CLX', new Set([wsA, wsB]))
+  // register clients and class subscribers on the broadcastService mock
+  broadcastService.wsClients.add(wsA)
+  broadcastService.wsClients.add(wsB)
+  broadcastService.wsClients.add(wsC)
+  broadcastService.classSubs.set('CLX', new Set([wsA, wsB]))
 
-    const payload = { type: 'event', data: 123 }
-    svc.publish('event', payload, 'CLX')
+  const payload = { type: 'event', data: 123 }
+  broadcastService.publish('event', payload, 'CLX')
 
-    expect(wsA.send).toHaveBeenCalledWith(JSON.stringify(payload))
-    expect(wsB.send).toHaveBeenCalledWith(JSON.stringify(payload))
-    expect(wsC.send).not.toHaveBeenCalled()
+  expect(wsA.send).toHaveBeenCalledWith(JSON.stringify(payload))
+  expect(wsB.send).toHaveBeenCalledWith(JSON.stringify(payload))
+  expect(wsC.send).not.toHaveBeenCalled()
   })
 
   it('publish is resilient when a socket.send throws and continues for other sockets', () => {
     const ws1 = { send: vi.fn(() => { throw new Error('broken') }) }
     const ws2 = { send: vi.fn() }
-    svc.wsClients.add(ws1)
-    svc.wsClients.add(ws2)
-    svc.classSubs.set('CLZ', new Set([ws1, ws2]))
+  broadcastService.wsClients.add(ws1)
+  broadcastService.wsClients.add(ws2)
+  broadcastService.classSubs.set('CLZ', new Set([ws1, ws2]))
 
     const payload = { hello: 'world' }
     // should not throw
-    expect(() => svc.publish('e', payload, 'CLZ')).not.toThrow()
-    expect(ws2.send).toHaveBeenCalledWith(JSON.stringify(payload))
+  expect(() => broadcastService.publish('e', payload, 'CLZ')).not.toThrow()
+  expect(ws2.send).toHaveBeenCalledWith(JSON.stringify(payload))
   })
 
   it('subscribe registers ws in maps and sets sessionId/role', async () => {
     const ws = { send: vi.fn(), on: vi.fn() }
     const obj = { type: 'subscribe', classId: 'CLASSREG', sessionId: 'SREG', role: 'student', displayName: 'Pedro' }
-    await svc._handleSubscribe(ws, obj)
-    expect(svc.classSubs.get('CLASSREG').has(ws)).toBe(true)
-    expect(svc.wsToClasses.get(ws).has('CLASSREG')).toBe(true)
+  await svc._handleSubscribe(ws, obj)
+  expect(broadcastService.classSubs.get('CLASSREG').has(ws)).toBe(true)
+  expect(broadcastService.wsToClasses.get(ws).has('CLASSREG')).toBe(true)
     expect(ws._sessionId).toBe('SREG')
     expect(ws._role).toBe('student')
   })
@@ -112,8 +162,8 @@ describe('WSManager', () => {
     fetchActiveQuestion.mockResolvedValue({ question: { id: 'QX', payload: {}, duration: 60 }, startedAt: Date.now() - 1000 })
     const wsStudent = { send: vi.fn(), on: vi.fn() }
     const wsTeacher = { send: vi.fn(), on: vi.fn() }
-    await svc._handleSubscribe(wsStudent, { type: 'subscribe', classId: 'CLQT', sessionId: 'SS', role: 'student' })
-    await svc._handleSubscribe(wsTeacher, { type: 'subscribe', classId: 'CLQT', sessionId: 'ST', role: 'teacher' })
+  await svc._handleSubscribe(wsStudent, { type: 'subscribe', classId: 'CLQT', sessionId: 'SS', role: 'student' })
+  await svc._handleSubscribe(wsTeacher, { type: 'subscribe', classId: 'CLQT', sessionId: 'ST', role: 'teacher' })
     // student should have received both subscribed and question-launched
     expect(wsStudent.send.mock.calls.some(c => c[0].includes('question-launched'))).toBe(true)
     // teacher should not receive question-launched
@@ -122,22 +172,22 @@ describe('WSManager', () => {
 
   it('unsubscribe removes subscription and calls handleDisconnect when sessionId provided', async () => {
     const ws = { send: vi.fn(), on: vi.fn() }
-    await svc._handleSubscribe(ws, { type: 'subscribe', classId: 'CLUN', sessionId: 'SUN', role: 'student' })
-    expect(svc.classSubs.get('CLUN').has(ws)).toBe(true)
-    await svc._handleUnsubscribe(ws, { type: 'unsubscribe', classId: 'CLUN', sessionId: 'SUN' })
-    expect(svc.classSubs.get('CLUN') && svc.classSubs.get('CLUN').has(ws)).toBe(false)
+  await svc._handleSubscribe(ws, { type: 'subscribe', classId: 'CLUN', sessionId: 'SUN', role: 'student' })
+  expect(broadcastService.classSubs.get('CLUN').has(ws)).toBe(true)
+  await svc._handleUnsubscribe(ws, { type: 'unsubscribe', classId: 'CLUN', sessionId: 'SUN' })
+  expect(broadcastService.classSubs.get('CLUN') && broadcastService.classSubs.get('CLUN').has(ws)).toBe(false)
     expect(participantsService.handleDisconnect).toHaveBeenCalledWith('CLUN', 'SUN')
   })
 
   it('publish without classId sends to all connected clients', () => {
     const a = { send: vi.fn() }
     const b = { send: vi.fn() }
-    svc.wsClients.add(a)
-    svc.wsClients.add(b)
-    const payload = { all: 1 }
-    svc.publish('notice', payload)
-    expect(a.send).toHaveBeenCalledWith(JSON.stringify(payload))
-    expect(b.send).toHaveBeenCalledWith(JSON.stringify(payload))
+  broadcastService.wsClients.add(a)
+  broadcastService.wsClients.add(b)
+  const payload = { all: 1 }
+  broadcastService.publish('notice', payload)
+  expect(a.send).toHaveBeenCalledWith(JSON.stringify(payload))
+  expect(b.send).toHaveBeenCalledWith(JSON.stringify(payload))
   })
 
   it('ignores JSON messages missing required fields (no-op)', async () => {
@@ -155,15 +205,15 @@ describe('WSManager', () => {
   it('_onClose cleans maps and calls participantsService.handleDisconnect for sessioned sockets', () => {
     const ws = { send: vi.fn(), on: vi.fn(), _sessionId: 'SCLOSE' }
     // simulate that ws is subscribed to two classes
-    svc.wsToClasses.set(ws, new Set(['A', 'B']))
-    svc.classSubs.set('A', new Set([ws]))
-    svc.classSubs.set('B', new Set([ws]))
-    svc.wsClients.add(ws)
+    broadcastService.wsToClasses.set(ws, new Set(['A', 'B']))
+    broadcastService.classSubs.set('A', new Set([ws]))
+    broadcastService.classSubs.set('B', new Set([ws]))
+    broadcastService.wsClients.add(ws)
     svc._onClose(ws)
-  expect(svc.wsToClasses.has(ws)).toBe(false)
+  expect(broadcastService.wsToClasses.has(ws)).toBe(false)
   // classSubs should not contain the classes anymore
-  expect(svc.classSubs.has('A')).toBe(false)
-  expect(svc.classSubs.has('B')).toBe(false)
+  expect(broadcastService.classSubs.has('A')).toBe(false)
+  expect(broadcastService.classSubs.has('B')).toBe(false)
   // ensure handleDisconnect was invoked for the sessioned socket for each class
   expect(participantsService.handleDisconnect).toHaveBeenCalledWith('A', 'SCLOSE')
   expect(participantsService.handleDisconnect).toHaveBeenCalledWith('B', 'SCLOSE')

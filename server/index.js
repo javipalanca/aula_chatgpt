@@ -25,6 +25,8 @@ import AnswerService from './services/AnswerService.js'
 import QuestionService from './services/QuestionService.js'
 import WSManager from './services/WSManager.js'
 import diagnosisControllerFactory from './controllers/diagnosis.js'
+import questionsControllerFactory from './controllers/questions.js'
+import BroadcastService from './services/BroadcastService.js'
 
 const MONGO_URI = process.env.MONGO_URI || ''
 const MONGO_DB = process.env.MONGO_DB || 'aula_chatgpt'
@@ -63,12 +65,9 @@ try {
   // Helper placeholder for fetchConnectedParticipants; actual binding will be set after services are created
   let fetchConnectedParticipants = async (classId, _opts = {}) => { throw new Error('participant service not initialized') }
 
-  // WebSocket server for real-time updates
-  const wsClients = new Set()
-  // classId -> Set(ws)
-  const classSubs = new Map()
-  // ws -> Set(classId)
-  // classId -> { question: publicQuestion, startedAt: timestamp }
+  // WebSocket bookkeeping and broadcasting encapsulated by BroadcastService
+  const broadcastService = new BroadcastService({ logger: console })
+  // classId -> { question: publicQuestion, startedAt }
   const activeQuestions = new Map()
   // In-memory cooldown map to avoid frequent writes for participant lastSeen updates
   const participantLastPersist = new Map()
@@ -76,29 +75,10 @@ try {
   // In-memory map to throttle heartbeat broadcasts to teacher UIs
   const participantLastBroadcast = new Map()
   const PARTICIPANT_BROADCAST_MIN_MS = 2000
-  const broadcast = (data, targetClassId) => {
-    const raw = JSON.stringify(data)
-    let targets = []
-    if (targetClassId) {
-      const set = classSubs.get(targetClassId)
-      if (set && set.size) targets = Array.from(set)
-    } else {
-      targets = Array.from(wsClients)
-    }
-    // Log only for key events (questions/results) to help debugging reachability
-    try {
-      if (data && (data.type === 'question-results' || data.type === 'question-launched')) {
-        console.log('Broadcasting', data.type, 'for class', targetClassId, 'to', targets.length, 'sockets')
-      }
-    } catch (e) { /* ignore logging errors */ }
-    for (const s of targets) {
-      try { s.send(raw) } catch(e) { console.warn('ws send failed', e) }
-    }
-  }
 
   // Instantiate services now that broadcast and in-memory maps exist
-  const participantService = new ParticipantService({ participantsRepo, broadcast, participantLastPersist, participantLastBroadcast, options: { minPersistMs: PARTICIPANT_MIN_PERSIST_MS, minBroadcastMs: PARTICIPANT_BROADCAST_MIN_MS } })
-  const answerService = new AnswerService({ answersRepo, participantsRepo, evaluator: llmEvaluator, broadcast })
+  const participantService = new ParticipantService({ participantsRepo, broadcast: (d, cid) => broadcastService.publish(d, cid), participantLastPersist, participantLastBroadcast, options: { minPersistMs: PARTICIPANT_MIN_PERSIST_MS, minBroadcastMs: PARTICIPANT_BROADCAST_MIN_MS } })
+  const answerService = new AnswerService({ answersRepo, participantsRepo, evaluator: llmEvaluator, broadcast: (d, cid) => broadcastService.publish(d, cid) })
 
   // Bind helper to delegate to participantService
   fetchConnectedParticipants = async (classId, opts = {}) => participantService.fetchConnectedParticipants(classId, opts)
@@ -112,12 +92,11 @@ try {
   const participantsController = participantsControllerFactory({ participantService, fetchConnectedParticipants })
   const answersController = answersControllerFactory({ answerService, answersRepo, activeQuestions })
   const classesController = classesControllerFactory({ classesRepo })
-  const challengesController = challengesControllerFactory({ challengesRepo, broadcast, activeQuestions })
+  const challengesController = challengesControllerFactory({ challengesRepo, broadcast: (d, cid) => broadcastService.publish(d, cid), activeQuestions })
   const progressController = progressControllerFactory({ progressRepo })
   const settingsController = settingsControllerFactory({ settingsRepo: settings })
   const llmController = llmControllerFactory({ evaluator: llmEvaluator, ollamaConfig: { url: OLLAMA_URL, model: OLLAMA_MODEL }, fetchImpl: fetch })
-  const questionsControllerFactory = (await import('./controllers/questions.js')).default
-  const questionService = new QuestionService({ answersRepo, participantsRepo, evaluator: llmEvaluator, broadcast })
+  const questionService = new QuestionService({ answersRepo, participantsRepo, evaluator: llmEvaluator, broadcast: (d, cid) => broadcastService.publish(d, cid) })
   const questionsController = questionsControllerFactory({ questionService })
   const diagnosisController = diagnosisControllerFactory({ diagnosisResultsRepo: diagnosisResults, ollamaConfig: { url: OLLAMA_URL, model: OLLAMA_MODEL }, fetchImpl: fetch, csvEscape })
 
@@ -146,8 +125,8 @@ try {
   })
   // Attach ws upgrade handler to the HTTP server (delegated to WSManager)
   const server = app.listen(PORT, () => console.log('Aula proxy server listening on', PORT))
-  // instantiate WSManager and attach
-  const wsManager = new WSManager({ participantsService: participantService, answerService, questionService, fetchActiveQuestion: async (cid) => activeQuestions.get(cid) })
+  // instantiate WSManager with broadcastService and attach
+  const wsManager = new WSManager({ participantsService: participantService, answerService, questionService, fetchActiveQuestion: async (cid) => activeQuestions.get(cid), broadcastService })
   wsManager.attach(server)
 } catch (err) {
   console.error(err)

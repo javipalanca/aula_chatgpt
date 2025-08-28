@@ -2,17 +2,14 @@
 import { WebSocketServer } from 'ws'
 
 export default class WSManager {
-  constructor({ participantsService = null, answerService = null, questionService = null, fetchActiveQuestion = null, options = {} } = {}) {
+  constructor({ participantsService = null, answerService = null, questionService = null, fetchActiveQuestion = null, broadcastService = null } = {}) {
     this.participantsService = participantsService
     this.answerService = answerService
     this.questionService = questionService
     // optional callback to fetch active question by classId
-    this.fetchActiveQuestion = fetchActiveQuestion || (async (cid) => null)
-
-    // internal maps
-    this.wsClients = new Set()
-    this.classSubs = new Map()
-    this.wsToClasses = new Map()
+  this.fetchActiveQuestion = fetchActiveQuestion || (async (_cid) => null)
+    // broadcastService handles client bookkeeping and publish
+    this.broadcastService = broadcastService
 
     this.wss = new WebSocketServer({ noServer: true })
   }
@@ -26,7 +23,7 @@ export default class WSManager {
   }
 
   _onConnection(ws) {
-    this.wsClients.add(ws)
+  if (this.broadcastService && typeof this.broadcastService.registerClient === 'function') this.broadcastService.registerClient(ws)
     ws.on('close', () => this._onClose(ws))
     ws.on('message', async (msg) => {
       await this._onMessage(ws, msg)
@@ -55,11 +52,7 @@ export default class WSManager {
     const sessionId = obj.sessionId || null
     const role = obj.role || 'student'
     // add to clients set and subscription maps
-    this.wsClients.add(ws)
-    if (!this.classSubs.has(cid)) this.classSubs.set(cid, new Set())
-    this.classSubs.get(cid).add(ws)
-    if (!this.wsToClasses.has(ws)) this.wsToClasses.set(ws, new Set())
-    this.wsToClasses.get(ws).add(cid)
+  if (this.broadcastService && typeof this.broadcastService.subscribe === 'function') this.broadcastService.subscribe(ws, cid)
     try { if (sessionId) ws._sessionId = sessionId } catch (e) { /* ignore */ }
     try { ws._role = role } catch (e) { /* ignore */ }
     if (sessionId && role === 'student' && this.participantsService && typeof this.participantsService.handleSubscribe === 'function') {
@@ -99,13 +92,7 @@ export default class WSManager {
   async _handleUnsubscribe(ws, obj) {
     const cid = obj.classId
     const sessionId = obj.sessionId || null
-    const set = this.classSubs.get(cid)
-    if (set) set.delete(ws)
-    const wsSet = this.wsToClasses.get(ws)
-    if (wsSet) {
-      wsSet.delete(cid)
-      if (wsSet.size === 0) this.wsToClasses.delete(ws)
-    }
+  if (this.broadcastService && typeof this.broadcastService.unsubscribe === 'function') this.broadcastService.unsubscribe(ws, cid)
     if (sessionId && this.participantsService && typeof this.participantsService.handleDisconnect === 'function') {
       await this.participantsService.handleDisconnect(cid, sessionId)
     }
@@ -127,35 +114,20 @@ export default class WSManager {
     }
   }
 
-  publish(type, payload, classId) {
-    const raw = JSON.stringify(payload)
-    let targets = []
-    if (classId) {
-      const set = this.classSubs.get(classId)
-      if (set && set.size) targets = Array.from(set)
-    } else {
-      targets = Array.from(this.wsClients)
-    }
-    for (const s of targets) {
-      try { s.send(raw) } catch(e) { /* ignore per socket errors */ }
-    }
-  }
-
   _onClose(ws) {
-    const set = this.wsToClasses.get(ws)
-    if (set) {
-      for (const cid of set) {
-        const s = this.classSubs.get(cid)
-        if (s) s.delete(ws)
-        if (s && s.size === 0) this.classSubs.delete(cid)
-        const sid = ws._sessionId || null
-        if (sid && this.participantsService && typeof this.participantsService.handleDisconnect === 'function') {
-          // best-effort
-          try { this.participantsService.handleDisconnect(cid, sid) } catch (e) { /* ignore */ }
+    // attempt participant disconnects for any classes this ws had (use broadcastService maps if available)
+    try {
+      const set = this.broadcastService && this.broadcastService.wsToClasses && this.broadcastService.wsToClasses.get && this.broadcastService.wsToClasses.get(ws)
+      if (set && ws && ws._sessionId && this.participantsService && typeof this.participantsService.handleDisconnect === 'function') {
+        for (const cid of set) {
+          try { this.participantsService.handleDisconnect(cid, ws._sessionId) } catch (e) { /* ignore per-socket error */ }
         }
       }
-      this.wsToClasses.delete(ws)
+    } catch (e) { /* ignore */ }
+
+    // delegate unregister to broadcastService to cleanup subscriptions
+    if (this.broadcastService && typeof this.broadcastService.unregisterClient === 'function') {
+      try { this.broadcastService.unregisterClient(ws) } catch (e) { /* ignore */ }
     }
-    this.wsClients.delete(ws)
   }
 }
