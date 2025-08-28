@@ -1,6 +1,6 @@
 import express from 'express'
 
-export default function answersController({ answerService, answersRepo, activeQuestions } = {}) {
+export default function answersController({ answerService, activeQuestions } = {}) {
   const router = express.Router()
 
   router.post('/', async (req, res) => {
@@ -20,7 +20,7 @@ export default function answersController({ answerService, answersRepo, activeQu
     if (classId) q.classId = classId
     if (questionId) q.questionId = questionId
     try {
-      const docs = await answersRepo.find(q)
+      const docs = await answerService.list(q)
       return res.json(docs)
     } catch (err) { return res.status(500).json({ ok: false, error: String(err) }) }
   })

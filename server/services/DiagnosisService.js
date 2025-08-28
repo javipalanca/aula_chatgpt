@@ -30,6 +30,16 @@ export default class DiagnosisService {
     }
   }
 
+  async validateBulo(answer = '') {
+    if (!this.ollamaUrl) throw new Error('Ollama not configured')
+    const prompt = `Eres un asistente que valida posibles bulos. Lee la respuesta: "${String(answer).slice(0,1000)}" y responde en JSON { verdict: 'bulo'|'no-bulo'|'dudoso', reasons: [..] } en español.`
+    const callUrl = this.ollamaUrl.replace(/\/$/, '') + '/api/generate'
+    const r = await fetch(callUrl, { method: 'POST', headers: { 'Content-Type':'application/json' }, body: JSON.stringify({ model: this.ollamaModel, prompt, max_tokens: 512 }) })
+    const text = await r.text()
+    if (!r.ok) throw new Error('Ollama call failed')
+    try { return JSON.parse(text) } catch (e) { throw new Error('Ollama returned unparsable output') }
+  }
+
   async saveResult(payload = {}) {
     payload.created_at = new Date()
     const r = await this.diagnosisRepo.insert(payload)

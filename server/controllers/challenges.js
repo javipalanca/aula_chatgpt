@@ -1,12 +1,13 @@
 import express from 'express'
 
-export default function challengesController({ challengesRepo, broadcast, activeQuestions } = {}) {
+export default function challengesController({ challengesService, challengesRepo } = {}) {
   const router = express.Router()
+  const service = challengesService || (challengesRepo ? { listByClass: (cid) => challengesRepo.findByClass(cid), upsert: (p) => challengesRepo.upsert(p) } : null)
 
   router.get('/', async (req, res) => {
-    const classId = req.query.classId
-    if (!classId) return res.json([])
-    try { const docs = await challengesRepo.findByClass(classId); return res.json(docs) } catch (e) { return res.status(500).json({ ok: false, error: String(e) }) }
+  const classId = req.query.classId
+  if (!classId) return res.json([])
+  try { const docs = await service.listByClass(classId); return res.json(docs) } catch (e) { return res.status(500).json({ ok: false, error: String(e) }) }
   })
 
   router.post('/', async (req, res) => {
@@ -21,16 +22,8 @@ export default function challengesController({ challengesRepo, broadcast, active
     } else { if (!payload.id) payload.id = `c-${Date.now()}` }
     payload.created_at = new Date()
     try {
-      await challengesRepo.upsert(payload)
-      const publicQuestion = { ...payload }
-      if (publicQuestion.payload && typeof publicQuestion.payload === 'object') {
-        publicQuestion.payload = { ...publicQuestion.payload }
-        if (typeof publicQuestion.payload.correctAnswer !== 'undefined') delete publicQuestion.payload.correctAnswer
-        if (typeof publicQuestion.payload.duration !== 'undefined') publicQuestion.duration = publicQuestion.payload.duration
-      }
-      try { activeQuestions.set(payload.classId, { question: publicQuestion, startedAt: Date.now() }) } catch (e) { /* ignore */ }
-      try { if (broadcast) broadcast({ type: 'question-launched', classId: payload.classId, question: publicQuestion }, payload.classId) } catch (e) { /* ignore */ }
-      return res.json({ ok: true })
+      const out = await service.upsert(payload)
+      return res.json(out)
     } catch (e) { return res.status(500).json({ ok: false, error: String(e) }) }
   })
 

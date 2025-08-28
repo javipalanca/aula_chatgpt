@@ -1,33 +1,33 @@
 import express from 'express'
 
-export default function classesController({ classesRepo } = {}) {
+export default function classesController({ classesRepo, classService } = {}) {
   const router = express.Router()
+  // prefer classService when provided
+  const service = classService || (classesRepo ? { list: (q)=>classesRepo.find(q), get: (id)=>classesRepo.findById(id), create: async (p)=>{ if (!p.id) p.id = (Math.random().toString(36).substring(2,8).toUpperCase()); p.created_at = p.created_at || new Date(); await classesRepo.upsert(p); return { ok: true, id: p.id } }, update: (id,u)=>classesRepo.update(id,u), delete: (id)=>classesRepo.deleteById(id) } : null)
 
   router.get('/', async (req, res) => {
     try {
-      const docs = await classesRepo.find({})
+      const docs = await service.list({})
       return res.json(docs)
     } catch (e) { return res.status(500).json({ ok: false, error: String(e) }) }
   })
 
   router.get('/:id', async (req, res) => {
-    try { const doc = await classesRepo.findById(req.params.id); return res.json(doc || null) } catch (e) { return res.status(500).json({ ok: false, error: String(e) }) }
+    try { const doc = await service.get(req.params.id); return res.json(doc || null) } catch (e) { return res.status(500).json({ ok: false, error: String(e) }) }
   })
 
   router.post('/', async (req, res) => {
     const payload = req.body || {}
-    if (!payload.id) payload.id = (Math.random().toString(36).substring(2,8).toUpperCase())
-    payload.created_at = new Date()
-    try { await classesRepo.upsert(payload); return res.json({ ok: true, id: payload.id }) } catch (e) { return res.status(500).json({ ok: false, error: String(e) }) }
+    try { const out = await service.create(payload); return res.json(out) } catch (e) { return res.status(500).json({ ok: false, error: String(e) }) }
   })
 
   router.patch('/:id', async (req, res) => {
-    try { const doc = await classesRepo.update(req.params.id, req.body || {}); return res.json(doc || null) } catch (e) { return res.status(500).json({ ok: false, error: String(e) }) }
+    try { const doc = await service.update(req.params.id, req.body || {}); return res.json(doc || null) } catch (e) { return res.status(500).json({ ok: false, error: String(e) }) }
   })
 
   router.delete('/:id', async (req, res) => {
     try {
-      await classesRepo.deleteById(req.params.id)
+      await service.delete(req.params.id)
       return res.json({ ok: true })
     } catch (e) { return res.status(500).json({ ok: false, error: String(e) }) }
   })

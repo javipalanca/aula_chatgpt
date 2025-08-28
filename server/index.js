@@ -27,6 +27,11 @@ import WSManager from './services/WSManager.js'
 import diagnosisControllerFactory from './controllers/diagnosis.js'
 import questionsControllerFactory from './controllers/questions.js'
 import BroadcastService from './services/BroadcastService.js'
+import ClassService from './services/ClassService.js'
+import ChallengesService from './services/ChallengesService.js'
+import ProgressService from './services/ProgressService.js'
+import SettingsService from './services/SettingsService.js'
+import DiagnosisService from './services/DiagnosisService.js'
 
 const MONGO_URI = process.env.MONGO_URI || ''
 const MONGO_DB = process.env.MONGO_DB || 'aula_chatgpt'
@@ -42,8 +47,19 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY || ''
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o'
 const OPENAI_URL = process.env.OPENAI_URL || ''
 
+  const activeQuestions = new Map()
+  // In-memory cooldown map to avoid frequent writes for participant lastSeen updates
+  const participantLastPersist = new Map()
+  const PARTICIPANT_MIN_PERSIST_MS = 5000
+  // In-memory map to throttle heartbeat broadcasts to teacher UIs
+  const participantLastBroadcast = new Map()
+  const PARTICIPANT_BROADCAST_MIN_MS = 2000
+
 // Instantiate evaluator service
 const llmEvaluator = new LLMEvaluator({ openaiKey: OPENAI_API_KEY, openaiUrl: OPENAI_URL, openaiModel: OPENAI_MODEL, ollamaUrl: OLLAMA_URL, ollamaModel: OLLAMA_MODEL })
+
+// Helper for fetching connected participants; will be bound once participantService is created
+let fetchConnectedParticipants
 
 // (LLM evaluator instance `llmEvaluator` is used directly by services/controllers)
 
@@ -62,23 +78,18 @@ try {
   // NOTE: services are instantiated after we declare in-memory maps and broadcast
   // (done below) so we defer their creation until those helpers exist.
 
-  // Helper for fetching connected participants; will be bound once participantService is created
-  let fetchConnectedParticipants
-
   // WebSocket bookkeeping and broadcasting encapsulated by BroadcastService
   const broadcastService = new BroadcastService({ logger: console })
   // classId -> { question: publicQuestion, startedAt }
-  const activeQuestions = new Map()
-  // In-memory cooldown map to avoid frequent writes for participant lastSeen updates
-  const participantLastPersist = new Map()
-  const PARTICIPANT_MIN_PERSIST_MS = 5000
-  // In-memory map to throttle heartbeat broadcasts to teacher UIs
-  const participantLastBroadcast = new Map()
-  const PARTICIPANT_BROADCAST_MIN_MS = 2000
-
   // Instantiate services now that broadcast and in-memory maps exist
   const participantService = new ParticipantService({ participantsRepo, broadcast: (d, cid) => broadcastService.publish(d, cid), participantLastPersist, participantLastBroadcast, options: { minPersistMs: PARTICIPANT_MIN_PERSIST_MS, minBroadcastMs: PARTICIPANT_BROADCAST_MIN_MS } })
   const answerService = new AnswerService({ answersRepo, participantsRepo, evaluator: llmEvaluator, broadcast: (d, cid) => broadcastService.publish(d, cid) })
+  const classService = new ClassService({ classesRepo })
+  const challengesService = new ChallengesService({ challengesRepo, broadcast: (d, cid) => broadcastService.publish(d, cid), activeQuestions })
+  const progressService = new ProgressService({ progressRepo })
+  const settingsService = new SettingsService({ settingsRepo })
+  const diagnosisService = new DiagnosisService({ diagnosisRepo: diagnosisResults, ollamaUrl: OLLAMA_URL, ollamaModel: OLLAMA_MODEL })
+  const questionService = new QuestionService({ answersRepo, participantsRepo, evaluator: llmEvaluator, broadcast: (d, cid) => broadcastService.publish(d, cid) })
 
   // Bind helper to delegate to participantService
   fetchConnectedParticipants = async (classId, opts = {}) => participantService.fetchConnectedParticipants(classId, opts)
@@ -90,15 +101,14 @@ try {
 
   // Instantiate services and controllers then mount them via app.use
   const participantsController = participantsControllerFactory({ participantService, fetchConnectedParticipants })
-  const answersController = answersControllerFactory({ answerService, answersRepo, activeQuestions })
-  const classesController = classesControllerFactory({ classesRepo })
-  const challengesController = challengesControllerFactory({ challengesRepo, broadcast: (d, cid) => broadcastService.publish(d, cid), activeQuestions })
-  const progressController = progressControllerFactory({ progressRepo })
-  const settingsController = settingsControllerFactory({ settingsRepo })
-  const llmController = llmControllerFactory({ evaluator: llmEvaluator, ollamaConfig: { url: OLLAMA_URL, model: OLLAMA_MODEL }, fetchImpl: fetch })
-  const questionService = new QuestionService({ answersRepo, participantsRepo, evaluator: llmEvaluator, broadcast: (d, cid) => broadcastService.publish(d, cid) })
+  const answersController = answersControllerFactory({ answerService, activeQuestions })
+  const classesController = classesControllerFactory({ classService })
+  const challengesController = challengesControllerFactory({ challengesService })
+  const progressController = progressControllerFactory({ progressService })
+  const settingsController = settingsControllerFactory({ settingsService })
+  const llmController = llmControllerFactory({ evaluator: llmEvaluator, ollamaConfig: { url: OLLAMA_URL, model: OLLAMA_MODEL }, fetchImpl: fetch })  
   const questionsController = questionsControllerFactory({ questionService })
-  const diagnosisController = diagnosisControllerFactory({ diagnosisResultsRepo: diagnosisResults, ollamaConfig: { url: OLLAMA_URL, model: OLLAMA_MODEL }, fetchImpl: fetch, csvEscape })
+  const diagnosisController = diagnosisControllerFactory({ diagnosisService, csvEscape })
 
   // Mount controllers under their API prefixes
   app.use('/api/participants', participantsController)
@@ -174,11 +184,11 @@ try {
     isShuttingDown = true
     console.log('Received', signal, '- shutting down')
     // safety timeout: force exit if shutdown stalls
-    const forceTimeout = setTimeout(() => {
+      const forceTimeout = setTimeout(() => {
       console.error('Shutdown timed out, forcing exit')
       try {
-        for (const s of _connections) { try { s.destroy() } catch (e) {} }
-  } catch (e) { console.debug('error destroying connections during forced exit', e) }
+        for (const s of _connections) { try { s.destroy() } catch (e) { console.debug('error destroying connection during forced exit', e) } }
+      } catch (e) { console.debug('error destroying connections during forced exit', e) }
       process.exit(1)
     }, 2000)
 

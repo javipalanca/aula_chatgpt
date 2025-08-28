@@ -6,14 +6,13 @@ import answersControllerFactory from '../../server/controllers/answers.js'
 describe('answers controller', () => {
   let app
   let answerService
-  let answersRepo
   let activeQuestions
 
   beforeEach(() => {
-    answerService = { submitAnswer: vi.fn().mockResolvedValue(true) }
-    answersRepo = { find: vi.fn().mockResolvedValue([{ questionId: 'Q1' }]) }
+  // answerService now must implement .list and .submitAnswer
+  answerService = { list: vi.fn().mockResolvedValue([{ questionId: 'Q1' }]), submitAnswer: vi.fn().mockResolvedValue(true) }
     activeQuestions = new Map()
-  const answersController = answersControllerFactory({ answerService, answersRepo, activeQuestions })
+  const answersController = answersControllerFactory({ answerService, activeQuestions })
   app = createApp()
   app.use('/api/answers', answersController)
   })

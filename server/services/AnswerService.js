@@ -72,4 +72,9 @@ export default class AnswerService {
 
     return { ok: true }
   }
+
+  async list(query = {}) {
+    if (!this.answersRepo || typeof this.answersRepo.find !== 'function') return []
+    return this.answersRepo.find(query)
+  }
 }
