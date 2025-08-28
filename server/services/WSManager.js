@@ -130,4 +130,23 @@ export default class WSManager {
       try { this.broadcastService.unregisterClient(ws) } catch (e) { /* ignore */ }
     }
   }
+
+  // Graceful close for the websocket server: terminate clients and close the server
+  async close() {
+    if (!this.wss) return
+    try {
+      // terminate any connected clients
+      for (const client of this.wss.clients) {
+        try { client.terminate() } catch (e) { /* ignore per-client */ }
+      }
+      // close the underlying server, wrapped in a promise
+      await new Promise((resolve) => {
+        try {
+          this.wss.close(() => resolve())
+        } catch (e) { resolve() }
+      })
+    } catch (e) {
+      // swallow errors during shutdown to avoid crashing the process while attempting cleanup
+    }
+  }
 }

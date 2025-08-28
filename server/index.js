@@ -10,7 +10,7 @@ import challengesControllerFactory from './controllers/challenges.js'
 import progressControllerFactory from './controllers/progress.js'
 import settingsControllerFactory from './controllers/settings.js'
 import llmControllerFactory from './controllers/llm.js'
-import { connectDb } from './lib/db.js'
+import { connectDb, closeDb } from './lib/db.js'
 import ParticipantsRepo from './repositories/ParticipantsRepo.js'
 import AnswersRepo from './repositories/AnswersRepo.js'
 import ClassesRepo from './repositories/ClassesRepo.js'
@@ -51,7 +51,7 @@ try {
   await connectDb({ uri: MONGO_URI, dbName: MONGO_DB })
   console.log('Connected to MongoDB', MONGO_URI, 'db=', MONGO_DB)
 
-  const settings = new SettingsRepo()
+  const settingsRepo = new SettingsRepo()
   const diagnosisResults = new DiagnosisRepo()
   const participantsRepo = new ParticipantsRepo()
   const answersRepo = new AnswersRepo()
@@ -94,7 +94,7 @@ try {
   const classesController = classesControllerFactory({ classesRepo })
   const challengesController = challengesControllerFactory({ challengesRepo, broadcast: (d, cid) => broadcastService.publish(d, cid), activeQuestions })
   const progressController = progressControllerFactory({ progressRepo })
-  const settingsController = settingsControllerFactory({ settingsRepo: settings })
+  const settingsController = settingsControllerFactory({ settingsRepo })
   const llmController = llmControllerFactory({ evaluator: llmEvaluator, ollamaConfig: { url: OLLAMA_URL, model: OLLAMA_MODEL }, fetchImpl: fetch })
   const questionService = new QuestionService({ answersRepo, participantsRepo, evaluator: llmEvaluator, broadcast: (d, cid) => broadcastService.publish(d, cid) })
   const questionsController = questionsControllerFactory({ questionService })
@@ -114,20 +114,58 @@ try {
   // Controllers mounted above via app.use(); inline route handlers removed
   app.get('/api/debug/dbstats', async (req, res) => {
     try {
+      // run counts in parallel to be faster
+      const [classesCount, participantsCount, challengesCount, diagnosisCount] = await Promise.all([
+        typeof classesRepo.count === 'function' ? classesRepo.count() : Promise.resolve(0),
+        participantsRepo.count(),
+        challengesRepo.count(),
+        diagnosisResults.count()
+      ])
       const counts = {
-  classes: await classesRepo.count(),
-        participants: await participantsRepo.count(),
-  challenges: await challengesRepo.count(),
-        diagnosis_results: await diagnosisResults.countDocuments()
+        classes: classesCount,
+        participants: participantsCount,
+        challenges: challengesCount,
+        diagnosis_results: diagnosisCount
       }
       return res.json({ ok: true, counts })
-    } catch (err) { return res.status(500).json({ ok: false, error: String(err) }) }
+    } catch (err) {
+      console.error('dbstats error', err)
+      return res.status(500).json({ ok: false, error: String(err) })
+    }
   })
   // Attach ws upgrade handler to the HTTP server (delegated to WSManager)
   const server = app.listen(PORT, () => console.log('Aula proxy server listening on', PORT))
+  server.on('error', (err) => console.error('HTTP server error', err))
+  // global handlers to surface otherwise silent crashes
+  process.on('uncaughtException', (err) => {
+    console.error('uncaughtException', err)
+  })
+  process.on('unhandledRejection', (reason) => {
+    console.error('unhandledRejection', reason)
+  })
   // instantiate WSManager with broadcastService and attach
   const wsManager = new WSManager({ participantsService: participantService, answerService, questionService, fetchActiveQuestion: async (cid) => activeQuestions.get(cid), broadcastService })
   wsManager.attach(server)
+  // graceful shutdown
+  const shutdown = async (signal) => {
+    try {
+      console.log('Received', signal, '- shutting down')
+      if (wsManager && typeof wsManager.close === 'function') {
+        try { await wsManager.close() } catch (e) { console.error('Error closing WS manager', e) }
+      }
+      // close HTTP server and wait for connections to drain
+      await new Promise((resolve) => {
+        try { server.close(() => { console.log('HTTP server closed'); resolve() }) } catch (e) { console.error('Error closing HTTP server', e); resolve() }
+      })
+      try { await closeDb() } catch (e) { console.error('Error closing DB', e) }
+      process.exit(0)
+    } catch (e) {
+      console.error('Error during shutdown', e)
+      process.exit(1)
+    }
+  }
+  process.on('SIGINT', () => shutdown('SIGINT'))
+  process.on('SIGTERM', () => shutdown('SIGTERM'))
 } catch (err) {
   console.error(err)
   process.exit(1)
