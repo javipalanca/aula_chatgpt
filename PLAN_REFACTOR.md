@@ -21,12 +21,14 @@ Checklist global (estado)
 - [x] Fase 0 — Preparación (app.js, .env.example)
 - [x] Fase 1 — Extraer `LLMEvaluator` (servicio + tests)
 - [~] Fase 2 — Extraer DB / Repositories (en progreso)
+ - [x] AnswersRepo — implementado e integrado en `server/index.js`
 - [ ] Fase 3 — Implementar `WSManager`
 - [ ] Checkpoint — lint/tests/smoke
 - [ ] Fase 4 — Mover rutas a controllers (HTTP)
 - [ ] Fase 5 — `QuestionService` (scoring/reveal)
 - [ ] Fase 6 — Frontend: extraer lógica TeacherDashboard a hook/service
 - [ ] Fase 7 — Cleanup, docs y cierre
+  - Comentario: `AnswersRepo` implementado y `server/index.js` actualizado para usarlo en todas las operaciones relacionadas con la base de datos de respuestas (upsert, find, findByClassQuestion). Tests añadidos: `test/answers.repo.test.js` (mock-based).
 
 Requisitos y supuestos
 ----------------------
@@ -256,6 +258,8 @@ Registro de progreso
 - Última actualización: __2025-08-28__
  - Comentarios:
   - __2025-08-28__: Fase 0 completada; Fase 1 (LLMEvaluator) completada; Fase 2 started — added `server/lib/db.js` and `server/repositories/ParticipantsRepo.js`, and updated participants endpoints in `server/index.js` to use the repo (partial integration).
+  - Comentarios adicional:
+   - __2025-08-28__: `AnswersRepo` implementado y totalmente integrado en `server/index.js`; tests unitarios para `AnswersRepo` añadidos y pasados localmente.
   - Test results (local):
    - `test/participants.repo.test.js` — PASS (mock-based unit tests for ParticipantsRepo).
    - `test/llm.evaluator.test.js` — PASS (LLMEvaluator unit tests ran earlier in session).

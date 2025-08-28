@@ -5,6 +5,7 @@ dotenv.config()
 import app from './app.js'
 import { connectDb, getCollection } from './lib/db.js'
 import ParticipantsRepo from './repositories/ParticipantsRepo.js'
+import AnswersRepo from './repositories/AnswersRepo.js'
 import { WebSocketServer } from 'ws'
 import LLMEvaluator from './services/LLMEvaluator.js'
 
@@ -38,10 +39,10 @@ try {
   const settings = getCollection('settings')
   const classes = getCollection('classes')
   const challenges = getCollection('challenges')
-  const answers = getCollection('answers')
   const diagnosisResults = getCollection('diagnosis_results')
 
   const participantsRepo = new ParticipantsRepo()
+  const answersRepo = new AnswersRepo()
 
   // Helper: fetch and normalize participants for teacher views (only connected by default)
   const fetchConnectedParticipants = async (classId, { includeDisconnected = false } = {}) => {
@@ -285,13 +286,13 @@ try {
     try {
       const id = `${payload.classId}:${payload.sessionId}:${payload.questionId}`
       const doc = { id, classId: payload.classId, sessionId: payload.sessionId, questionId: payload.questionId, answer: payload.answer, created_at: new Date() }
-      await answers.replaceOne({ id }, doc, { upsert: true })
+  await answersRepo.upsert(doc)
       // broadcast answers-updated for this class/question (raw answer)
       try { broadcast({ type: 'answers-updated', classId: payload.classId, questionId: payload.questionId, answer: doc }, payload.classId) } catch(e) { console.warn('broadcast answers-updated failed', e) }
 
       // compute aggregate counts for this question in this class and broadcast answers-count
       try {
-        const docs = await answers.find({ classId: payload.classId, questionId: payload.questionId }).toArray()
+  const docs = await answersRepo.findByClassQuestion(payload.classId, payload.questionId)
         const counts = {}
         for (const a of docs) {
           const key = a.answer == null ? '' : String(a.answer)
@@ -323,7 +324,7 @@ try {
             const awarded = Math.round((Number(points) || 0) * scoreFraction * Math.max(0, 1 - percent))
             if (awarded > 0) await participantsRepo.incScore(payload.classId, payload.sessionId, awarded)
             // attach evaluation to answer doc
-            try { await answers.replaceOne({ id }, { ...doc, evaluation: { score: scoreFraction, feedback, awardedPoints: awarded, evaluatedAt: new Date(), source: 'client' } }, { upsert: true }) } catch(e) { console.warn('attach client evaluation to answer failed (http)', e) }
+            try { await answersRepo.upsert({ ...doc, evaluation: { score: scoreFraction, feedback, awardedPoints: awarded, evaluatedAt: new Date(), source: 'client' } }) } catch(e) { console.warn('attach client evaluation to answer failed (http)', e) }
             // broadcast answer-evaluated so teachers receive it immediately
             try { broadcast({ type: 'answer-evaluated', classId: payload.classId, questionId: payload.questionId, sessionId: payload.sessionId, score: scoreFraction, feedback, awardedPoints: awarded, source: 'client' }, payload.classId) } catch(e) { console.warn('broadcast answer-evaluated failed (http)', e) }
           } catch(e) { console.warn('handle client evaluation (http) failed', e) }
@@ -341,7 +342,7 @@ try {
     if (classId) q.classId = classId
     if (questionId) q.questionId = questionId
     try {
-      const docs = await answers.find(q).toArray()
+  const docs = await answersRepo.find(q)
       return res.json(docs)
     } catch (err) { return res.status(500).json({ ok: false, error: String(err) }) }
   })
@@ -352,7 +353,7 @@ try {
     const { classId, correctAnswer, points = 100 } = req.body || {}
     if (!classId || typeof correctAnswer === 'undefined') return res.status(400).json({ error: 'classId and correctAnswer required' })
     try {
-      const docs = await answers.find({ classId, questionId }).toArray()
+  const docs = await answersRepo.findByClassQuestion(classId, questionId)
       const distribution = {}
       const correctSessions = []
       for (const a of docs) {
@@ -762,12 +763,12 @@ try {
                 try { console.info('WS answer submit received', { classId: payload.classId, questionId: payload.questionId, sessionId: payload.sessionId, preview: String(payload.answer).slice(0,200) }) } catch(e) { /* ignore */ }
               const id = `${payload.classId}:${payload.sessionId}:${payload.questionId}`
               const doc = { id, classId: payload.classId, sessionId: payload.sessionId, questionId: payload.questionId, answer: payload.answer, created_at: new Date() }
-              try { await answers.replaceOne({ id }, doc, { upsert: true }) } catch(e) { console.error('answers WS replaceOne failed', e) }
+              try { await answersRepo.upsert(doc) } catch(e) { console.error('answers WS replaceOne failed', e) }
               // broadcast answers-updated for this class/question (raw answer)
               try { broadcast({ type: 'answers-updated', classId: payload.classId, questionId: payload.questionId, answer: doc }, payload.classId) } catch(e) { console.warn('broadcast answers-updated failed (ws answer)', e) }
               // compute aggregate counts for this question in this class and broadcast answers-count
               try {
-                const docs = await answers.find({ classId: payload.classId, questionId: payload.questionId }).toArray()
+                const docs = await answersRepo.findByClassQuestion(payload.classId, payload.questionId)
                 const counts = {}
                 for (const a of docs) {
                   const key = a.answer == null ? '' : String(a.answer)
@@ -797,7 +798,7 @@ try {
                       const points = (questionPayload && Number(questionPayload.points)) ? Number(questionPayload.points) : 100
                       const awarded = Math.round((Number(points) || 0) * scoreFraction * Math.max(0, 1 - percent))
                       if (awarded > 0) await participantsRepo.incScore(payload.classId, payload.sessionId, awarded)
-                      try { await answers.replaceOne({ id }, { ...doc, evaluation: { score: scoreFraction, feedback, awardedPoints: awarded, evaluatedAt: new Date(), source: 'client' } }, { upsert: true }) } catch(e) { console.warn('attach client evaluation to answer failed (ws)', e) }
+                      try { await answersRepo.upsert({ ...doc, evaluation: { score: scoreFraction, feedback, awardedPoints: awarded, evaluatedAt: new Date(), source: 'client' } }) } catch(e) { console.warn('attach client evaluation to answer failed (ws)', e) }
                       try { broadcast({ type: 'answer-evaluated', classId: payload.classId, questionId: payload.questionId, sessionId: payload.sessionId, score: scoreFraction, feedback, awardedPoints: awarded, source: 'client' }, payload.classId) } catch(e) { console.warn('broadcast answer-evaluated failed (ws)', e) }
                     } else {
                       const answerText = Array.isArray(payload.answer) ? payload.answer.join(', ') : String(payload.answer || '')
@@ -811,7 +812,7 @@ try {
                       const points = (questionPayload && Number(questionPayload.points)) ? Number(questionPayload.points) : 100
                       const awarded = Math.round((Number(points) || 0) * scoreFraction * Math.max(0, 1 - percent))
                       if (awarded > 0) await participantsRepo.incScore(payload.classId, payload.sessionId, awarded)
-                      try { await answers.replaceOne({ id }, { ...doc, evaluation: { score: scoreFraction, feedback: evalRes.feedback || '', awardedPoints: awarded, evaluatedAt: new Date(), source: 'server' } }, { upsert: true }) } catch(e) { console.warn('attach evaluation to answer failed (ws)', e) }
+                      try { await answersRepo.upsert({ ...doc, evaluation: { score: scoreFraction, feedback: evalRes.feedback || '', awardedPoints: awarded, evaluatedAt: new Date(), source: 'server' } }) } catch(e) { console.warn('attach evaluation to answer failed (ws)', e) }
                       try { broadcast({ type: 'answer-evaluated', classId: payload.classId, questionId: payload.questionId, sessionId: payload.sessionId, score: scoreFraction, feedback: evalRes.feedback || '', awardedPoints: awarded, source: 'server' }, payload.classId) } catch(e) { console.warn('broadcast answer-evaluated failed (ws)', e) }
                     }
                   } catch(e) { console.error('LLM evaluation at submit (ws) failed', e) }
@@ -860,7 +861,7 @@ try {
               const correctAnswer = obj.correctAnswer
               const points = obj.points || 100
               // compute distribution
-              const docs = await answers.find({ classId, questionId }).toArray()
+              const docs = await answersRepo.findByClassQuestion(classId, questionId)
               const distribution = {}
               const correctSessions = []
               for (const a of docs) {

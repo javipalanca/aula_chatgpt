@@ -7,6 +7,7 @@ import TeacherDashboard from '../src/modules/TeacherDashboard'
 vi.mock('../src/lib/storage', async () => ({
   createClass: vi.fn().mockResolvedValue({ id: 'MOCK' }),
   listClasses: vi.fn().mockReturnValue([]),
+  syncClassesRemote: vi.fn().mockResolvedValue([]),
 }))
 
 describe('TeacherDashboard', () => {
