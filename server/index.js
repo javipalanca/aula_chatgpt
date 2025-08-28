@@ -62,8 +62,8 @@ try {
   // NOTE: services are instantiated after we declare in-memory maps and broadcast
   // (done below) so we defer their creation until those helpers exist.
 
-  // Helper placeholder for fetchConnectedParticipants; actual binding will be set after services are created
-  let fetchConnectedParticipants = async (classId, _opts = {}) => { throw new Error('participant service not initialized') }
+  // Helper for fetching connected participants; will be bound once participantService is created
+  let fetchConnectedParticipants
 
   // WebSocket bookkeeping and broadcasting encapsulated by BroadcastService
   const broadcastService = new BroadcastService({ logger: console })
@@ -108,6 +108,18 @@ try {
   app.use('/api/progress', progressController)
   app.use('/api/settings', settingsController)
   app.use('/api/llm', llmController)
+  // Backwards-compat: some clients call /api/evaluate directly — provide a short alias
+  app.post('/api/evaluate', async (req, res) => {
+    const { question, answer } = req.body || {}
+    if (!question || !answer) return res.status(400).json({ error: 'Question and answer are required' })
+    try {
+      const result = await llmEvaluator.evaluate(question, answer)
+      return res.json(result)
+    } catch (e) {
+      console.error('evaluate alias error', e)
+      return res.status(500).json({ error: 'Evaluation failed' })
+    }
+  })
   app.use('/api/questions', questionsController)
   app.use('/api/diagnosis', diagnosisController)
 
@@ -136,6 +148,12 @@ try {
   // Attach ws upgrade handler to the HTTP server (delegated to WSManager)
   const server = app.listen(PORT, () => console.log('Aula proxy server listening on', PORT))
   server.on('error', (err) => console.error('HTTP server error', err))
+  // track raw connections so we can forcibly destroy them on shutdown if needed
+  const _connections = new Set()
+  server.on('connection', (socket) => {
+    _connections.add(socket)
+    socket.on('close', () => _connections.delete(socket))
+  })
   // global handlers to surface otherwise silent crashes
   process.on('uncaughtException', (err) => {
     console.error('uncaughtException', err)
@@ -146,21 +164,47 @@ try {
   // instantiate WSManager with broadcastService and attach
   const wsManager = new WSManager({ participantsService: participantService, answerService, questionService, fetchActiveQuestion: async (cid) => activeQuestions.get(cid), broadcastService })
   wsManager.attach(server)
-  // graceful shutdown
+  // graceful shutdown with forced timeout and connection destroy
+  let isShuttingDown = false
   const shutdown = async (signal) => {
+    if (isShuttingDown) {
+      console.log('Shutdown already in progress...')
+      return
+    }
+    isShuttingDown = true
+    console.log('Received', signal, '- shutting down')
+    // safety timeout: force exit if shutdown stalls
+    const forceTimeout = setTimeout(() => {
+      console.error('Shutdown timed out, forcing exit')
+      try {
+        for (const s of _connections) { try { s.destroy() } catch (e) {} }
+  } catch (e) { console.debug('error destroying connections during forced exit', e) }
+      process.exit(1)
+    }, 2000)
+
     try {
-      console.log('Received', signal, '- shutting down')
       if (wsManager && typeof wsManager.close === 'function') {
         try { await wsManager.close() } catch (e) { console.error('Error closing WS manager', e) }
       }
-      // close HTTP server and wait for connections to drain
+
+      // stop accepting new connections and wait for existing to close
       await new Promise((resolve) => {
         try { server.close(() => { console.log('HTTP server closed'); resolve() }) } catch (e) { console.error('Error closing HTTP server', e); resolve() }
       })
+
+      // destroy any stubborn open sockets
+      try {
+        for (const s of _connections) {
+          try { s.destroy() } catch (e) { /* ignore per-socket */ }
+        }
+  } catch (e) { console.debug('error destroying lingering sockets', e) }
+
       try { await closeDb() } catch (e) { console.error('Error closing DB', e) }
+      clearTimeout(forceTimeout)
       process.exit(0)
     } catch (e) {
       console.error('Error during shutdown', e)
+      clearTimeout(forceTimeout)
       process.exit(1)
     }
   }
