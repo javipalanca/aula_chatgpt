@@ -1,3 +1,4 @@
+
 # PLAN_REFACTOR.md
 
 Propósito
@@ -30,8 +31,10 @@ Checklist global (estado)
 - [x] Fase 3 — Implementar `WSManager` (implementado y conectado en `server/index.js`)
 - [x] Checkpoint — lint/tests/smoke (lint: PASS; unit tests: añadidos; ejecutar suite localmente para validación final)
 - [~] Fase 4 — Mover rutas a controllers (HTTP) (pendiente)
- - [~] Fase 4 — Mover rutas a controllers (HTTP) (en progreso: participants + answers extraídos)
+ - [x] Fase 4 — Mover rutas a controllers (HTTP) (implementado)
+  - Comentario: controllers principales creados e integrados (`participants`, `answers`, `questions`, `classes`, `challenges`, `progress`, `settings`, `llm`, `diagnosis`). Montaje por composición en `server/index.js` con `app.use`.
 - [~] Fase 5 — `QuestionService` (scoring/reveal) (servicio creado; handler/reveal migration partially pending)
+ - [~] Fase 5 — `QuestionService` (scoring/reveal) (servicio creado; handler/reveal HTTP delegation pending)
 - [ ] Fase 6 — Frontend: extraer lógica TeacherDashboard a hook/service
 - [ ] Fase 7 — Cleanup, docs y cierre
   - Comentario: `AnswersRepo` implementado y `server/index.js` actualizado para usarlo en todas las operaciones relacionadas con la base de datos de respuestas (upsert, find, findByClassQuestion). Tests añadidos: `test/answers.repo.test.js` (mock-based).
@@ -49,6 +52,8 @@ Checklist global (estado)
     - __2025-08-28__: Ajustes en `server/index.js`: creación de repos en el composition root y desplazamiento de la instanciación de servicios para usar las funciones `broadcast`, `participantLastPersist` y `participantLastBroadcast` ya declaradas.
     - __2025-08-28__: `AnswerService` evaluador/awarding logic corrected to support nested `activeQuestion.question.payload` and server-side evaluation fallback; tests updated/added accordingly.
   - __2025-08-28__: `WSManager` implementado: `server/services/WSManager.js` creado y `server/index.js` actualizado para usar `wsManager.attach(server)`. Se añadieron tests en `test/wsmanager.test.js` que cubren subscribe/ping/answer/reveal flows y se añadieron tests adicionales para edge cases (mensajes malformados y reveal no autorizado).
+  - __2025-08-28__: `BroadcastService` implementado (`server/services/BroadcastService.js`). `WSManager` actualizado para delegar la contabilidad de sockets (registro, subscripciones, publish) a `BroadcastService`. `server/index.js` actualizado para instanciar `BroadcastService` y pasar un wrapper `broadcast` a los servicios y controladores.
+  - __2025-08-28__: Tests unitarios añadidos: `test/services/BroadcastService.test.js`. `test/wsmanager.test.js` actualizado para inyectar un mock de `broadcastService` (refactor de tests para reflejar cambio de responsabilidad).
 
 Requisitos y supuestos
 ----------------------
@@ -188,6 +193,7 @@ Checkpoint (tras Fases 0-3)
  Ejecutar:
   - [x] `npm run lint` — resultado: [PASS]
   - [~] `npm test` — resultado: [unit tests added; ejecutar la suite localmente y confirmar green]
+  - [~] `npm test` — resultado: algunos tests unitarios corren; fue necesario ajustar tests tras extraer `BroadcastService` y corregir `_onClose` en `WSManager`.
   - [ ] Smoke: levantar servidor y probar endpoints básicos:
     - GET `/api/debug/dbstats` => OK (manual check suggested)
     - POST `/api/evaluate` => OK (puede devolver neutral si no hay keys)
@@ -196,16 +202,17 @@ Checkpoint (tras Fases 0-3)
 Fase 4 — Controllers HTTP
 - Objetivo: mover lógica de rutas a `server/controllers/*` y montar routers en `server/app.js`.
 - Tareas:
+ - Tareas:
   - [x] Crear controllers para `participants` y `answers` (implementados: `server/controllers/participants.js`, `server/controllers/answers.js`).
-  - [x] Actualizar `server/app.js` para exponer una fábrica `createApp(deps)` que monta controllers inyectados.
-  - [~] Tests de integración (`supertest`) para rutas críticas (`/api/answers`, `/api/questions/:id/reveal`, `/api/evaluate`) — pendientes.
-  - [~] Pendiente: extraer controllers adicionales (classes, challenges, diagnosis, llm) en PRs subsiguientes.
+  - [x] Crear controllers adicionales y montarlos: `server/controllers/questions.js`, `server/controllers/classes.js`, `server/controllers/challenges.js`, `server/controllers/progress.js`, `server/controllers/settings.js`, `server/controllers/llm.js`, `server/controllers/diagnosis.js`.
+  - [x] Actualizar `server/app.js` / `server/index.js` para montar routers con `app.use` desde la composition root. Tests de controladores añadidos (`test/controllers/*`).
+  - [~] Tests de integración (`supertest`) para rutas críticas (`/api/answers`, `/api/questions/:id/reveal`, `/api/evaluate`) — en progreso / parciales.
 
  Fase 5 — QuestionService (lógica pura)
  - Objetivo: encapsular scoring y reveal.
  - Tareas:
    - [x] Crear `server/services/QuestionService.js` con implementación de scoring y reveal (archivo añadido).
-  - [~] Migrar la lógica de `reveal` desde `server/index.js` a `QuestionService` (parcial: `QuestionService` implementada; WSManager ya delega a `QuestionService` para reveals, pero el endpoint HTTP `/api/questions/:id/reveal` en `server/index.js` todavía contiene lógica y debe delegar al servicio para eliminar duplicación).
+  - [~] Migrar la lógica de `reveal` desde `server/index.js` a `QuestionService` (parcial: `QuestionService` implementada; WSManager ya delega a `QuestionService` para reveals, pero el endpoint HTTP `/api/questions/:id/reveal` debe delegar al servicio para eliminar duplicación). Prioridad alta.
    - [x] Tests unitarios: `test/question.service.test.js` añadido (cubre MCQ y open/prompt paths).
 
 Fase 6 — Frontend: TeacherDashboard -> useTeacherController
@@ -302,6 +309,43 @@ Registro de progreso
   - `test/progress.repo.test.js` — PASS (mock-based).
 
   - Vitest run (2025-08-28 13:52 local): 21 tests passed, 0 failed. Full run output available in developer environment.
+
+  - __2025-08-28__: Broadcast and controller refactor progress:
+   - `server/services/BroadcastService.js` añadido y usado por `WSManager`.
+   - Tests añadidos/ajustados: `test/services/BroadcastService.test.js`, `test/wsmanager.test.js` (actualizado), y múltiples `test/controllers/*` para los routers extraídos.
+   - Se corrigió `WSManager._onClose` para invocar `participantsService.handleDisconnect` por cada clase antes de limpiar suscripciones.
+
+  - Vitest run (2025-08-28): suite parcial ejecutada; se ajustaron tests y código en ciclos cortos hasta estabilizar los casos unitarios relacionados con WS y broadcasting. Recomendado: ejecutar `npm test` completo localmente y abordar los últimos fallos menores (tests de integración pendientes y cobertura de edge-cases).
+
+Firma
+-----
+Plan actualizado — entrada propia generada el __2025-08-28__ con el estado actual del refactor y recomendaciones para el siguiente paso.
+
+---
+
+Siguiente paso recomendado (con prioridad y pasos concretos)
+-----------------------------------------------------------
+1) Meta inmediata (duración estimada: 1-2 horas): dejar la suite unitaria verde en la rama `refactor_oop`.
+  - Ejecutar localmente: `npm run lint` (debe pasar) y `npm test`.
+  - Corregir cualquier test unitario restante (especialmente controllers y casos de WS que dependan de `BroadcastService`).
+  - Resultado esperado: todos los tests unitarios pasan.
+
+2) Integración HTTP/WS (duración estimada: 1-3 horas): añadir tests de integración esenciales.
+  - Crear 2-3 tests `supertest` que arranquen `createApp()` + mocks/inyecten repos y verifiquen endpoints críticos:
+    - `PUT /api/settings/:id` upsert behavior
+    - `POST /api/answers` flow
+    - `POST /api/questions/:id/reveal` delegación a `QuestionService` (mock)
+  - Añadir integración WS mínima: test que monta `WSManager` con `broadcastService` mock y valida el flujo subscribe -> publish -> receive.
+
+3) Finalizar Fase 5 (duración estimada: 1-2 horas): delegar el handler HTTP de reveal al `QuestionService`.
+  - Mover la lógica remanente del endpoint HTTP `/api/questions/:id/reveal` para usar `QuestionService.revealQuestion`.
+  - Añadir tests unitarios para el endpoint que verifiquen la delegación y el comportamiento esperado.
+
+4) Harden & docs (duración estimada: 2-4 horas): pruebas de integración a BD y documentación.
+  - Añadir tests con `mongodb-memory-server` para validar queries reales del repos.
+  - Escribir `README-ARCHITECTURE.md` y actualizar `PLAN_REFACTOR.md` con contratos finales.
+
+Si quieres que implemente el siguiente paso ahora, dime cuál escoges (1: tests unitarios verdes localmente; 2: tests de integración supertest; 3: delegar reveal al `QuestionService`) y lo hago aquí mismo: crearé los tests/patches y ejecutaré los que sean rápidos. 
 
 Firma
 -----
