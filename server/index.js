@@ -3,12 +3,14 @@
 import dotenv from 'dotenv'
 dotenv.config()
 import app from './app.js'
-import { connectDb, getCollection } from './lib/db.js'
+import { connectDb } from './lib/db.js'
 import ParticipantsRepo from './repositories/ParticipantsRepo.js'
 import AnswersRepo from './repositories/AnswersRepo.js'
 import ClassesRepo from './repositories/ClassesRepo.js'
 import ChallengesRepo from './repositories/ChallengesRepo.js'
 import ProgressRepo from './repositories/ProgressRepo.js'
+import DiagnosisRepo from './repositories/DiagnosisRepo.js'
+import SettingsRepo from './repositories/SettingsRepo.js'
 import { WebSocketServer } from 'ws'
 import LLMEvaluator from './services/LLMEvaluator.js'
 
@@ -39,10 +41,10 @@ try {
   console.log('Connected to MongoDB', MONGO_URI, 'db=', MONGO_DB)
 
   // const progress = getCollection('progress') -- replaced by ProgressRepo
-  const settings = getCollection('settings')
+  const settings = new SettingsRepo()
   // const classes = getCollection('classes') -- replaced by ClassesRepo
   // const challenges = getCollection('challenges') -- replaced by ChallengesRepo
-  const diagnosisResults = getCollection('diagnosis_results')
+  const diagnosisResults = new DiagnosisRepo()
 
   const participantsRepo = new ParticipantsRepo()
   const answersRepo = new AnswersRepo()
@@ -106,13 +108,13 @@ try {
 
   // Settings
   app.get('/api/settings/:id', async (req, res) => {
-    const doc = await settings.findOne({ id: req.params.id })
+    const doc = await settings.findById(req.params.id)
     return res.json(doc || null)
   })
   app.put('/api/settings/:id', async (req, res) => {
     const id = req.params.id
     const data = req.body.data || {}
-    await settings.replaceOne({ id }, { id, data, updated_at: new Date() }, { upsert: true })
+    await settings.upsert({ id, data })
     return res.json({ ok: true })
   })
 
@@ -581,8 +583,8 @@ try {
     const payload = req.body || {}
     payload.created_at = new Date()
     try {
-      const r = await diagnosisResults.insertOne(payload)
-      return res.json({ ok: true, id: payload.id || r.insertedId.toString() })
+      const r = await diagnosisResults.insert(payload)
+      return res.json({ ok: true, id: payload.id || (r && r.insertedId && r.insertedId.toString()) || 'ok' })
     } catch (err) {
       console.error('insert diagnosis result error', err)
       return res.status(500).json({ ok: false, error: String(err) })
@@ -591,10 +593,8 @@ try {
 
   app.get('/api/diagnosis/results', async (req, res) => {
     const classId = req.query.classId
-    const q = {}
-    if (classId) q.classId = classId
     try {
-      const docs = await diagnosisResults.find(q).toArray()
+      const docs = await diagnosisResults.find(classId ? { classId } : {})
       return res.json(docs)
     } catch (err) {
       return res.status(500).json({ ok: false, error: String(err) })
@@ -604,7 +604,7 @@ try {
   app.get('/api/diagnosis/report/:classId', async (req, res) => {
     const classId = req.params.classId
     try {
-      const docs = await diagnosisResults.find(classId ? { classId } : {}).toArray()
+      const docs = await diagnosisResults.find(classId ? { classId } : {})
       // CSV header
       const rows = []
   rows.push(['id','classId','studentId','stage','score','verdict','created_at','raw'].join(','))

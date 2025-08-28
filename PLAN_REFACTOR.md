@@ -38,6 +38,10 @@ Checklist global (estado)
    - __2025-08-28__: `ChallengesRepo` implementado (`server/repositories/ChallengesRepo.js`) y tests unitarios añadidos (`test/challenges.repo.test.js`). `server/index.js` actualizado para usar `ChallengesRepo` en endpoints de challenges y en limpieza por clase.
   - Comentario adicional 3:
    - __2025-08-28__: `ProgressRepo` implementado (`server/repositories/ProgressRepo.js`) y tests unitarios añadidos (`test/progress.repo.test.js`). `server/index.js` actualizado para usar `ProgressRepo` en endpoints de progreso.
+    - Comentario adicional 4:
+     - __2025-08-28__: `DiagnosisRepo` implementado (`server/repositories/DiagnosisRepo.js`) y tests unitarios añadidos (`test/diagnosis.repo.test.js`). `server/index.js` actualizado para usar `DiagnosisRepo` en endpoints de diagnóstico.
+    - Comentario adicional 5:
+     - __2025-08-28__: `SettingsRepo` implementado (`server/repositories/SettingsRepo.js`) y tests unitarios añadidos (`test/settings.repo.test.js`). `server/index.js` actualizado para use `SettingsRepo` in settings endpoints.
 
 Requisitos y supuestos
 ----------------------
@@ -138,16 +142,30 @@ Notas de la Fase 1:
 - Por petición del propietario, la suite de tests no es obligatoria como paso bloqueante; sin embargo los tests están disponibles en `test/`.
 
 Fase 2 — Extraer DB / Repositorios
-- Objetivo: encapsular acceso a Mongo.
-- Tareas:
+- Objetivo: encapsular acceso a Mongo y centralizar la lógica de persistencia en clases (repos) probadas.
+- Estado general: en gran medida completado. Repos principales implementados e integrados en `server/index.js`. Tests unitarios añadidos y ejecutados localmente.
+- Tareas y estado:
   - [x] Crear `server/lib/db.js` con connectDb/getDb helper (reintentos simples y manejo de errores).
-  - [x] Crear repos: `server/repositories/*` con métodos atómicos (ver contratos).  
-    - Comentario: `ParticipantsRepo` implementado y extendido con helpers (deleteByClass, count, findOneById, findOneByClassSession, resetScores).
-  - [x] Reescribir `server/index.js` para usar repos en lugar de `db.collection` directo (participantes: sustituido completamente).
-    - Comentario: Todos los accesos directos a la colección `participants` fueron reemplazados por `ParticipantsRepo`.
-  - [x] Tests unitarios para repos (mock-based): `test/participants.repo.test.js` añadido (usa fake in-memory collection).
-  - Comentario: integración parcial — endpoints `/api/participants` and `/api/participants/reset-scores` updated to use `ParticipantsRepo`.
-- [ ] Tests unitarios para repos (usar `mongodb-memory-server` o mocks).
+  - Repos implementados (checkbox por repo):
+    - [x] `ParticipantsRepo` — `server/repositories/ParticipantsRepo.js` (upsert, incScore, listConnected, markDisconnected, resetScores, findOne helpers)
+    - [x] `AnswersRepo` — `server/repositories/AnswersRepo.js` (upsert, find, findByClassQuestion, findById, deleteByClass, count)
+    - [x] `ClassesRepo` — `server/repositories/ClassesRepo.js` (upsert, find, findById, update, deleteById, count)
+    - [x] `ChallengesRepo` — `server/repositories/ChallengesRepo.js` (upsert, findByClass, deleteByClass, findById, deleteById, count)
+    - [x] `ProgressRepo` — `server/repositories/ProgressRepo.js` (upsert, findById, find, deleteById, count)
+    - [x] `DiagnosisRepo` — `server/repositories/DiagnosisRepo.js` (insert, find, findByClass, deleteByClass, count)
+    - [x] `SettingsRepo` — `server/repositories/SettingsRepo.js` (findById, upsert, count)
+  - [x] Reescribir `server/index.js` para usar repos en lugar de `db.collection` directo. Todas las rutas/handlers que antes usaban `getCollection('...')` para las colecciones extraídas ahora llaman a los repos correspondientes.
+  - [x] Tests unitarios (mock-based) para los repos añadidos: `test/participants.repo.test.js`, `test/answers.repo.test.js`, `test/classes.repo.test.js`, `test/challenges.repo.test.js`, `test/progress.repo.test.js`, `test/diagnosis.repo.test.js`, `test/settings.repo.test.js` — están presentes y la suite local pasó (21/21 → actualizado en el registro).
+  - [x] Integración mínima: endpoints `/api/participants`, `/api/answers`, `/api/classes`, `/api/challenges`, `/api/progress`, `/api/diagnosis/*`, `/api/settings/:id` usan repos.
+
+- Pendientes / mejoras recomendadas (no bloqueantes):
+  - [ ] Añadir tests más robustos con `mongodb-memory-server` para validar queries reales contra Mongo (integration tests).
+  - [ ] Añadir tests de integración `supertest` para endpoints críticos que dependen de repos (e.g., `/api/diagnosis/results`, `/api/settings/:id`).
+  - [ ] Revisar y consolidar contratos públicos de los repos (docstrings / README-ARCHITECTURE) para que futuros servicios los consuman sin ambigüedad.
+
+Notas:
+- Los tests unitarios usan fakes que simulan la API básica del driver de Mongo (por ejemplo `find()` devolviendo un objeto con `toArray()`), esto evitó fricciones durante el refactor.
+- Con los repos implementados es más sencillo extraer `WSManager` y `QuestionService` en la siguiente fase porque la persistencia ya está encapsulada.
 
 Fase 3 — WSManager (encapsular websockets)
 - Objetivo: mover todo `wss` y la lógica de mensajes a `server/services/WSManager.js`.
