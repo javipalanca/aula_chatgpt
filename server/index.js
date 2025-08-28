@@ -6,6 +6,9 @@ import app from './app.js'
 import { connectDb, getCollection } from './lib/db.js'
 import ParticipantsRepo from './repositories/ParticipantsRepo.js'
 import AnswersRepo from './repositories/AnswersRepo.js'
+import ClassesRepo from './repositories/ClassesRepo.js'
+import ChallengesRepo from './repositories/ChallengesRepo.js'
+import ProgressRepo from './repositories/ProgressRepo.js'
 import { WebSocketServer } from 'ws'
 import LLMEvaluator from './services/LLMEvaluator.js'
 
@@ -35,14 +38,17 @@ try {
   await connectDb({ uri: MONGO_URI, dbName: MONGO_DB })
   console.log('Connected to MongoDB', MONGO_URI, 'db=', MONGO_DB)
 
-  const progress = getCollection('progress')
+  // const progress = getCollection('progress') -- replaced by ProgressRepo
   const settings = getCollection('settings')
-  const classes = getCollection('classes')
-  const challenges = getCollection('challenges')
+  // const classes = getCollection('classes') -- replaced by ClassesRepo
+  // const challenges = getCollection('challenges') -- replaced by ChallengesRepo
   const diagnosisResults = getCollection('diagnosis_results')
 
   const participantsRepo = new ParticipantsRepo()
   const answersRepo = new AnswersRepo()
+  const classesRepo = new ClassesRepo()
+  const challengesRepo = new ChallengesRepo()
+  const progressRepo = new ProgressRepo()
 
   // Helper: fetch and normalize participants for teacher views (only connected by default)
   const fetchConnectedParticipants = async (classId, { includeDisconnected = false } = {}) => {
@@ -88,13 +94,13 @@ try {
 
   // Progress
   app.get('/api/progress/:id', async (req, res) => {
-    const doc = await progress.findOne({ id: req.params.id })
-    return res.json(doc || null)
+  const doc = await progressRepo.findById(req.params.id)
+  return res.json(doc || null)
   })
   app.put('/api/progress/:id', async (req, res) => {
     const id = req.params.id
     const data = req.body.data || {}
-    await progress.replaceOne({ id }, { id, data, updated_at: new Date() }, { upsert: true })
+  await progressRepo.upsert({ id, data, updated_at: new Date() })
     return res.json({ ok: true })
   })
 
@@ -112,19 +118,19 @@ try {
 
   // Classes
   app.get('/api/classes', async (req, res) => {
-    const docs = await classes.find({}).toArray()
-    console.log('GET /api/classes docs:', docs);
-    return res.json(docs)
+  const docs = await classesRepo.find({})
+  console.log('GET /api/classes docs:', docs);
+  return res.json(docs)
   })
   app.get('/api/classes/:id', async (req,res) => {
-    const doc = await classes.findOne({ id: req.params.id })
+  const doc = await classesRepo.findById(req.params.id)
     return res.json(doc || null)
   })
   app.post('/api/classes', async (req, res) => {
     const payload = req.body || {}
     if (!payload.id) payload.id = (Math.random().toString(36).substring(2,8).toUpperCase())
     payload.created_at = new Date()
-    await classes.replaceOne({ id: payload.id }, payload, { upsert: true })
+  await classesRepo.upsert(payload)
     return res.json({ ok: true, id: payload.id })
   })
   
@@ -134,9 +140,8 @@ try {
     const updates = req.body || {}
     console.log('PATCH /api/classes/:id updates:', updates);
     try {
-      await classes.updateOne({ id }, { $set: updates })
-      const doc = await classes.findOne({ id })
-      return res.json(doc || null)
+  const doc = await classesRepo.update(id, updates)
+  return res.json(doc || null)
     } catch (e) {
       return res.status(500).json({ error: String(e) })
     }
@@ -146,9 +151,9 @@ try {
   app.delete('/api/classes/:id', async (req, res) => {
     const id = req.params.id
     try {
-  await classes.deleteOne({ id })
+  await classesRepo.deleteById(id)
   await participantsRepo.deleteByClass(id)
-      await challenges.deleteMany({ classId: id })
+  await challengesRepo.deleteByClass(id)
       return res.json({ ok: true })
     } catch (e) {
       return res.status(500).json({ error: String(e) })
@@ -222,7 +227,7 @@ try {
   app.get('/api/challenges', async (req, res) => {
     const classId = req.query.classId
     if (!classId) return res.json([])
-    const docs = await challenges.find({ classId }).toArray()
+  const docs = await challengesRepo.findByClass(classId)
     return res.json(docs)
   })
   app.post('/api/challenges', async (req, res) => {
@@ -244,7 +249,7 @@ try {
       if (!payload.id) payload.id = `c-${Date.now()}`
     }
     payload.created_at = new Date()
-    await challenges.replaceOne({ id: payload.id }, payload, { upsert: true })
+  await challengesRepo.upsert(payload)
   // broadcast question launched (kahoot mode)
     try {
     // do not leak the correctAnswer in payload to students on launch
@@ -625,9 +630,9 @@ try {
   app.get('/api/debug/dbstats', async (req, res) => {
     try {
       const counts = {
-        classes: await classes.countDocuments(),
+  classes: await classesRepo.count(),
         participants: await participantsRepo.count(),
-        challenges: await challenges.countDocuments(),
+  challenges: await challengesRepo.count(),
         diagnosis_results: await diagnosisResults.countDocuments()
       }
       return res.json({ ok: true, counts })

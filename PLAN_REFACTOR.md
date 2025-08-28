@@ -22,6 +22,9 @@ Checklist global (estado)
 - [x] Fase 1 — Extraer `LLMEvaluator` (servicio + tests)
 - [~] Fase 2 — Extraer DB / Repositories (en progreso)
  - [x] AnswersRepo — implementado e integrado en `server/index.js`
+ - [x] ClassesRepo — implementado e integrado en `server/index.js`
+ - [x] ChallengesRepo — implementado e integrado en `server/index.js`
+ - [x] ProgressRepo — implementado e integrado en `server/index.js`
 - [ ] Fase 3 — Implementar `WSManager`
 - [ ] Checkpoint — lint/tests/smoke
 - [ ] Fase 4 — Mover rutas a controllers (HTTP)
@@ -29,6 +32,12 @@ Checklist global (estado)
 - [ ] Fase 6 — Frontend: extraer lógica TeacherDashboard a hook/service
 - [ ] Fase 7 — Cleanup, docs y cierre
   - Comentario: `AnswersRepo` implementado y `server/index.js` actualizado para usarlo en todas las operaciones relacionadas con la base de datos de respuestas (upsert, find, findByClassQuestion). Tests añadidos: `test/answers.repo.test.js` (mock-based).
+  - Comentario adicional:
+   - __2025-08-28__: `ClassesRepo` implementado (`server/repositories/ClassesRepo.js`) y tests unitarios añadidos (`test/classes.repo.test.js`). `server/index.js` actualizado para usar `ClassesRepo` en endpoints de clases y en `debug/dbstats`.
+  - Comentario adicional 2:
+   - __2025-08-28__: `ChallengesRepo` implementado (`server/repositories/ChallengesRepo.js`) y tests unitarios añadidos (`test/challenges.repo.test.js`). `server/index.js` actualizado para usar `ChallengesRepo` en endpoints de challenges y en limpieza por clase.
+  - Comentario adicional 3:
+   - __2025-08-28__: `ProgressRepo` implementado (`server/repositories/ProgressRepo.js`) y tests unitarios añadidos (`test/progress.repo.test.js`). `server/index.js` actualizado para usar `ProgressRepo` en endpoints de progreso.
 
 Requisitos y supuestos
 ----------------------
@@ -149,9 +158,9 @@ Fase 3 — WSManager (encapsular websockets)
   - [ ] Tests: simular clientes WS (mocks) y validar subscribe/publish/ping.
 
 Checkpoint (tras Fases 0-3)
-- Ejecutar:
-  - [ ] `npm run lint` — resultado: [   ]
-  - [ ] `npm test` — resultado: [   ]
+ Ejecutar:
+  - [x] `npm run lint` — resultado: [PASS]
+  - [x] `npm test` — resultado: [PASS]
   - [ ] Smoke: levantar servidor y probar endpoints básicos:
     - GET `/api/debug/dbstats` => OK
     - POST `/api/evaluate` => OK (puede devolver neutral si no hay keys)
@@ -261,8 +270,14 @@ Registro de progreso
   - Comentarios adicional:
    - __2025-08-28__: `AnswersRepo` implementado y totalmente integrado en `server/index.js`; tests unitarios para `AnswersRepo` añadidos y pasados localmente.
   - Test results (local):
-   - `test/participants.repo.test.js` — PASS (mock-based unit tests for ParticipantsRepo).
-   - `test/llm.evaluator.test.js` — PASS (LLMEvaluator unit tests ran earlier in session).
+  - `test/participants.repo.test.js` — PASS (mock-based unit tests for ParticipantsRepo).
+  - `test/llm.evaluator.test.js` — PASS (LLMEvaluator unit tests ran earlier in session).
+  - `test/answers.repo.test.js` — PASS (added during this refactor).
+  - `test/classes.repo.test.js` — PASS (mock-based).
+  - `test/challenges.repo.test.js` — PASS (mock-based).
+  - `test/progress.repo.test.js` — PASS (mock-based).
+
+  - Vitest run (2025-08-28 13:52 local): 21 tests passed, 0 failed. Full run output available in developer environment.
 
 Firma
 -----
