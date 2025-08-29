@@ -50,6 +50,20 @@ export default function useTeacherDashboard() {
   const badMapper = (b, idx) => ({ id: `q-bad-${idx}-${Date.now()}`, title: b.bad, duration: b.duration || 180, options: [], payload: { source: 'BAD_PROMPTS', tip: b.tip, evaluation: 'prompt' } })
   // (helpers for building default blocks are available as the individual mappers)
 
+  // return the index of the first question in block that has not been asked yet
+  function findFirstUnaskedIndex(block, meta) {
+    try {
+      if (!block || !Array.isArray(block.questions) || block.questions.length === 0) return null
+      const asked = (meta && meta.askedQuestions) ? meta.askedQuestions : {}
+      for (let i = 0; i < block.questions.length; i++) {
+        const q = block.questions[i]
+        if (!q) continue
+        if (!asked[q.id]) return i
+      }
+      return null // all asked
+    } catch (e) { return null }
+  }
+
   useEffect(()=>{
     // Inicialización de clases
     setClasses(listClasses())
@@ -501,7 +515,10 @@ export default function useTeacherDashboard() {
       const next = (typeof meta.currentBlockIndex === 'number' ? meta.currentBlockIndex : 0) + 1
       if (next >= blocks.length) return toast('No hay más bloques')
       meta.currentBlockIndex = next
-      meta.currentQuestionIndex = 0
+      // Choose the first unasked question in the target block, if any
+      const nextBlock = blocks[next]
+      const firstUnasked = findFirstUnaskedIndex(nextBlock, meta)
+      meta.currentQuestionIndex = (typeof firstUnasked === 'number' && firstUnasked >= 0) ? firstUnasked : 0
       await persistClassMeta(selected, meta)
       setClasses(listClasses())
       setBlockViewIndex(next)
@@ -516,6 +533,51 @@ export default function useTeacherDashboard() {
   toast('Siguiente bloque')
     } catch (e) { console.error('handleNextBlock failed', e); toast('No se pudo avanzar de bloque') }
   }
+
+  // When the teacher changes the block view (e.g. clicks a different block bubble),
+  // ensure meta.currentBlockIndex/currentQuestionIndex are set so the "next question"
+  // will be the first non-asked in that block; if all asked, enable the Next Block button.
+  useEffect(() => {
+    if (!selected) return
+    try {
+      const cls = classes.find(c => (c.code || c.id) === selected) || {}
+      const meta = cls.meta || {}
+      const blocks = meta.blocks || []
+      const idx = blockViewIndex
+      if (idx == null || idx < 0 || idx >= blocks.length) return
+      const block = blocks[idx]
+      const firstUnasked = findFirstUnaskedIndex(block, meta)
+      if (typeof firstUnasked === 'number' && firstUnasked >= 0) {
+        // Do not override a user's explicit selection: if meta.currentQuestionIndex
+        // already points to an unasked question we keep it. Only replace when
+        // the current index is invalid/out of range or points to an already-asked question.
+        const curIdx = (typeof meta.currentQuestionIndex === 'number') ? meta.currentQuestionIndex : null
+        const inRange = curIdx !== null && curIdx >= 0 && curIdx < (block.questions ? block.questions.length : 0)
+        const asked = (meta && meta.askedQuestions) ? meta.askedQuestions : {}
+        const curPointsToUnasked = inRange && !asked[block.questions[curIdx].id]
+
+        if (!inRange || !curPointsToUnasked) {
+          const needsBlockUpdate = meta.currentBlockIndex !== idx
+          const needsQuestionUpdate = meta.currentQuestionIndex !== firstUnasked
+          if (needsBlockUpdate || needsQuestionUpdate) {
+            meta.currentBlockIndex = idx
+            meta.currentQuestionIndex = firstUnasked
+            meta.finished = false
+            // persist but don't force a local classes refresh here (storage will emit update)
+            persistClassMeta(selected, meta).catch(()=>{})
+          }
+        }
+        setShowNextBlockButton(false)
+        setShowFinishGameButton(false)
+      } else {
+        // All questions in this block were asked
+        // If this is the last block, show finish, otherwise show next block
+        const isLastBlock = (idx + 1) >= (blocks ? blocks.length : 0)
+        setShowFinishGameButton(isLastBlock)
+        setShowNextBlockButton(!isLastBlock)
+      }
+    } catch (e) { /* ignore */ }
+  }, [blockViewIndex, selected, classes])
 
   const selectedClassData = selected ? classes.find(c => (c.code || c.id) === selected) : null;
   const memoSelectedClassData = useMemo(() => selectedClassData, [selected, classes])

@@ -86,9 +86,15 @@ export function Timeline({ classData, blockViewIndex, setBlockViewIndex, questio
                 const askedMap = (classData && classData.meta && classData.meta.askedQuestions) || {}
                 const isAskedInMeta = !!askedMap[q.id]
                 const isAnswered = isAskedInMeta || answeredQuestionIds.has(q.id);
+                // Determine which question is the "next" to be launched according to class meta
+                const meta = (classData && classData.meta) || {}
+                const isNext = (typeof meta.currentBlockIndex === 'number' && Number(meta.currentBlockIndex) === blockIndex && typeof meta.currentQuestionIndex === 'number' && Number(meta.currentQuestionIndex) === i)
                 const baseClasses = 'w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium shadow-sm transition-transform';
+                // Visual priority: active (running) > next (halo) > answered (green) > default
                 const colorClass = isActive
                   ? 'bg-yellow-400 text-black ring-2 ring-yellow-300 scale-105'
+                  : isNext
+                  ? 'bg-slate-700 text-white/90 ring-4 ring-blue-400/30 scale-105'
                   : isAnswered
                   ? 'bg-green-500 text-white'
                   : 'bg-slate-700 text-white/90';
