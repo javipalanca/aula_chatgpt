@@ -55,7 +55,9 @@ export default class BroadcastService {
       targets = Array.from(this.wsClients)
     }
     try {
-      if (data && (data.type === 'question-results' || data.type === 'question-launched')) this.logger.log('Broadcasting', data.type, 'for class', targetClassId, 'to', targets.length, 'sockets')
+  // Helpful debug log for heartbeat/participants broadcasts as well
+  try { this.logger.debug && this.logger.debug('BroadcastService.publish', { type: data && data.type, classId: targetClassId, targets: targets.length }) } catch (e) { /* ignore logger errors */ }
+  if (data && (data.type === 'question-results' || data.type === 'question-launched')) this.logger.log('Broadcasting', data.type, 'for class', targetClassId, 'to', targets.length, 'sockets')
     } catch (e) { /* ignore logger errors */ }
     for (const s of targets) {
       try { s.send(raw) } catch (e) { try { this.logger.warn('ws send failed', e) } catch (er) { /* ignore */ } }

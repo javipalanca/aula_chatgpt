@@ -70,6 +70,15 @@ export default class WSManager {
         q.duration = remaining
         try { ws.send(JSON.stringify({ type: 'question-launched', classId: cid, question: q })) } catch(e) { /* ignore */ }
       }
+      // Send current participants list to teacher on subscribe so they get an
+      // immediate snapshot (avoids race where participant joins before teacher
+      // subscribed and broadcast was missed).
+      try {
+        if (role === 'teacher' && this.participantsService && typeof this.participantsService.fetchConnectedParticipants === 'function') {
+          const docs = await this.participantsService.fetchConnectedParticipants(cid)
+          try { ws.send(JSON.stringify({ type: 'participants-updated', classId: cid, participants: docs })) } catch (e) { /* ignore send errors */ }
+        }
+      } catch (e) { /* ignore fetch errors */ }
     } catch (e) { /* ignore */ }
   }
 

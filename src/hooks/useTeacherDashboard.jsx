@@ -45,9 +45,37 @@ export default function useTeacherDashboard() {
 
   // --- small helpers extracted for readability ---
   const buildBlock = (id, name, items, mapper) => ({ id, name, questions: items.map(mapper) })
-  const verifMapper = (v, idx) => ({ id: `q-verif-${idx}-${Date.now()}`, title: v.q, duration: v.duration || 30, options: Array.isArray(v.options) ? v.options.slice() : [], payload: { source: 'VERIF_QUIZ', explain: v.explain, correctAnswer: (Array.isArray(v.options) && typeof v.a !== 'undefined') ? v.options[v.a] : null } })
-  const ethicsMapper = (e, idx) => ({ id: `q-eth-${idx}-${Date.now()}`, title: e.text, duration: e.duration || 30, options: ['No es correcto','Es correcto'], payload: { source: 'ETHICS_SCENARIOS', why: e.why, correctAnswer: e.good ? 'Es correcto' : 'No es correcto' } })
-  const badMapper = (b, idx) => ({ id: `q-bad-${idx}-${Date.now()}`, title: b.bad, duration: b.duration || 180, options: [], payload: { source: 'BAD_PROMPTS', tip: b.tip, evaluation: 'prompt' } })
+  const verifMapper = (v, idx) => ({
+    id: `q-verif-${idx}-${Date.now()}`,
+    title: v.q,
+    duration: v.duration || 30,
+    options: Array.isArray(v.options) ? v.options.slice() : [],
+    type: v.type || 'single',
+    maxPoints: v.maxPoints || 100,
+    timeDecay: typeof v.timeDecay === 'boolean' ? v.timeDecay : true,
+    payload: { source: 'VERIF_QUIZ', explain: v.explain, correctAnswer: (Array.isArray(v.options) && typeof v.a !== 'undefined') ? v.options[v.a] : null }
+  })
+  const ethicsMapper = (e, idx) => ({
+    id: `q-eth-${idx}-${Date.now()}`,
+    title: e.text,
+    duration: e.duration || 30,
+    options: ['No es correcto','Es correcto'],
+    type: e.type || 'single',
+    maxPoints: e.maxPoints || 100,
+    timeDecay: typeof e.timeDecay === 'boolean' ? e.timeDecay : true,
+    payload: { source: 'ETHICS_SCENARIOS', why: e.why, correctAnswer: e.good ? 'Es correcto' : 'No es correcto' }
+  })
+  const badMapper = (b, idx) => ({
+    id: `q-bad-${idx}-${Date.now()}`,
+    title: b.bad,
+    duration: b.duration || 180,
+    options: [],
+    type: b.type || 'prompt',
+    maxPoints: b.maxPoints || 200,
+    timeDecay: typeof b.timeDecay === 'boolean' ? b.timeDecay : false,
+    systemPrompt: b.systemPrompt || null,
+    payload: { source: 'BAD_PROMPTS', tip: b.tip, evaluation: 'prompt' }
+  })
   // (helpers for building default blocks are available as the individual mappers)
 
   // return the index of the first question in block that has not been asked yet
@@ -164,7 +192,9 @@ export default function useTeacherDashboard() {
       setParticipants(prev => {
         const copy = (prev || []).slice()
         const idx = copy.findIndex(p => p.sessionId === d.sessionId)
-        const entry = { sessionId: d.sessionId, displayName: d.displayName || (`Alumno-${String(d.sessionId).slice(0,5)}`), score: (copy[idx] && copy[idx].score) || 0, lastSeen: d.lastSeen || new Date(), connected: d.type === 'participant-heartbeat' }
+  // Preserve existing displayName if heartbeat does not include one
+  const existingName = (copy[idx] && copy[idx].displayName) ? copy[idx].displayName : null
+  const entry = { sessionId: d.sessionId, displayName: d.displayName || existingName || (`Alumno-${String(d.sessionId).slice(0,5)}`), score: (copy[idx] && copy[idx].score) || 0, lastSeen: d.lastSeen || new Date(), connected: d.type === 'participant-heartbeat' }
         if (idx === -1) copy.push(entry)
         else copy[idx] = { ...copy[idx], ...entry }
         return copy
@@ -224,10 +254,11 @@ export default function useTeacherDashboard() {
 
       // HTTP fallback: call the reveal endpoint directly
       try {
+        const pointsToSend = (questionRunning && typeof questionRunning.maxPoints === 'number') ? Number(questionRunning.maxPoints) : ((questionRunning && questionRunning.payload && questionRunning.payload.maxPoints) ? Number(questionRunning.payload.maxPoints) : 100)
         const r = await fetch(`/api/questions/${encodeURIComponent(questionRunning.id)}/reveal`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ classId: selected, correctAnswer: correct, points: (questionRunning.payload && questionRunning.payload.points) ? Number(questionRunning.payload.points) : 100 })
+          body: JSON.stringify({ classId: selected, correctAnswer: correct, points: pointsToSend })
         })
         if (!r.ok) throw new Error('HTTP reveal failed: ' + r.status)
         const json = await r.json()
@@ -415,7 +446,17 @@ export default function useTeacherDashboard() {
 
       const payload = { ...(questionToLaunch.payload || {}), blockId: block.id, blockName: block.name, blockIndex: currentBlockIndex, questionIndex: currentQuestionIndex }
       const options = Array.isArray(questionToLaunch.options) ? questionToLaunch.options : []
-            const qPayload = { id: questionToLaunch.id || `q-${Date.now()}`, title: questionToLaunch.title, options, duration: questionToLaunch.duration, payload }
+            const qPayload = {
+              id: questionToLaunch.id || `q-${Date.now()}`,
+              title: questionToLaunch.title,
+              options,
+              duration: questionToLaunch.duration,
+              type: questionToLaunch.type || 'single',
+              maxPoints: questionToLaunch.maxPoints || 100,
+              timeDecay: typeof questionToLaunch.timeDecay === 'boolean' ? questionToLaunch.timeDecay : true,
+              systemPrompt: questionToLaunch.systemPrompt || null,
+              payload
+            }
 
       // Launch the current question
       const q = await createQuestion(selected, qPayload)

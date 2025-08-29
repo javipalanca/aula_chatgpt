@@ -35,8 +35,9 @@ export default class ParticipantService {
     // broadcast participants-updated
     try {
       if (typeof this.broadcast === 'function') {
-        const docs = await this.fetchConnectedParticipants(payload.classId)
-        this.broadcast({ type: 'participants-updated', classId: payload.classId, participants: docs }, payload.classId)
+  const docs = await this.fetchConnectedParticipants(payload.classId)
+  try { console.debug('ParticipantService.saveParticipant: broadcasting participants-updated', { classId: payload.classId, count: (docs && docs.length) || 0 }) } catch (e) { /* ignore */ }
+  this.broadcast({ type: 'participants-updated', classId: payload.classId, participants: docs }, payload.classId)
       }
     } catch (e) { /* ignore broadcast errors */ }
     return { ok: true }
@@ -68,6 +69,7 @@ export default class ParticipantService {
       try {
         if (typeof this.broadcast === 'function') {
           const docs = await this.fetchConnectedParticipants(classId)
+          try { console.debug('ParticipantService.handleSubscribe: broadcasting participants-updated', { classId, count: (docs && docs.length) || 0, sessionId, displayName: toSet.displayName }) } catch (e) { /* ignore */ }
           this.broadcast({ type: 'participants-updated', classId, participants: docs }, classId)
         }
       } catch (e) { /* ignore */ }
@@ -93,7 +95,11 @@ export default class ParticipantService {
         const now = Date.now()
         const last = this.participantLastPersist.get(key) || 0
         if (now - last >= this.minPersistMs) {
-          await this.participantsRepo.upsert({ id: `${classId}:${sessionId}`, classId, sessionId, lastSeen: new Date(), connected: true })
+          // preserve existing displayName when updating lastSeen/connected to avoid
+          // replacing the whole document and erasing the stored displayName
+          const up = { id: `${classId}:${sessionId}`, classId, sessionId, lastSeen: new Date(), connected: true }
+          if (prev && prev.displayName) up.displayName = prev.displayName
+          await this.participantsRepo.upsert(up)
           this.participantLastPersist.set(key, now)
         }
       } catch (e) { /* ignore */ }
@@ -107,7 +113,10 @@ export default class ParticipantService {
       if (nowB - lastB >= this.minBroadcastMs) {
         this.participantLastBroadcast.set(hbKey, nowB)
         const displayName = (prev && prev.displayName) ? prev.displayName : `Alumno-${String(sessionId).slice(0,5)}`
-        if (typeof this.broadcast === 'function') this.broadcast({ type: 'participant-heartbeat', classId, sessionId, displayName, lastSeen: new Date(), connected: true }, classId)
+        if (typeof this.broadcast === 'function') {
+          try { console.debug('ParticipantService.handlePing: broadcasting participant-heartbeat', { classId, sessionId, displayName }) } catch (e) { /* ignore */ }
+          this.broadcast({ type: 'participant-heartbeat', classId, sessionId, displayName, lastSeen: new Date(), connected: true }, classId)
+        }
       }
     } catch (e) { /* ignore */ }
   }

@@ -299,7 +299,7 @@ export async function joinClass(code, displayName, password = null) {
     if (!provided || provided !== doc.passwordHash) throw new Error('Contraseña incorrecta')
   }
   const pid = `${code}:${sid}`
-  const payload = { id: pid, classId: code, sessionId: sid, displayName: displayName || `Alumno-${sid.slice(0,5)}`, score: 0, progress: {}, lastSeen: Date.now() }
+  const payload = { id: pid, classId: code, sessionId: sid, displayName: displayName || `Alumno-${sid.slice(0,5)}`, score: 0, progress: {}, lastSeen: Date.now(), connected: true }
   const res = await fetch(`${API_BASE}/api/participants`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
   if (!res.ok) throw new Error('Failed to join class')
   try { await syncClassesRemote() } catch(e){ console.warn('syncClassesRemote failed after joinClass', e) }
@@ -318,7 +318,9 @@ export async function postParticipantUpdate(code, { sessionId = getSessionId(), 
   if (!USE_API) throw new Error('postParticipantUpdate requires VITE_STORAGE_API')
   const pid = `${code}:${sessionId}`
   // send scoreDelta so the server can increment accumulated score
-  const payload = { id: pid, classId: code, sessionId, displayName: `Alumno-${sessionId.slice(0,5)}`, scoreDelta: Number(scoreDelta) || 0, progress: progress || {}, lastSeen: Date.now() }
+  // Do not set a default displayName here to avoid overwriting an existing
+  // participant displayName in the DB when only updating score/progress.
+  const payload = { id: pid, classId: code, sessionId, scoreDelta: Number(scoreDelta) || 0, progress: progress || {}, lastSeen: Date.now() }
   const r = await fetch(`${API_BASE}/api/participants`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
   if (!r.ok) throw new Error('postParticipantUpdate failed')
   try { await syncClassesRemote() } catch(e){ console.warn('syncClassesRemote failed', e) }
@@ -336,8 +338,9 @@ export function startHeartbeat(classId, intervalMs = 5000) {
         if (typeof _ws !== 'undefined' && _ws && _ws.readyState === WebSocket.OPEN) {
           try { _ws.send(JSON.stringify({ type: 'ping', classId, sessionId: sid })) } catch(e) { console.warn('heartbeat ws send failed', e) }
         } else if (USE_API) {
-          // fallback: update participant lastSeen via POST (no score change)
-          try { await fetch(`${API_BASE}/api/participants`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: `${classId}:${sid}`, classId, sessionId: sid, displayName: `Alumno-${sid.slice(0,5)}`, lastSeen: Date.now() }) }) } catch(e) { console.warn('heartbeat POST failed', e) }
+          // fallback: update participant lastSeen via POST (no score change).
+          // Omit displayName so we don't overwrite an existing custom name.
+          try { await fetch(`${API_BASE}/api/participants`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: `${classId}:${sid}`, classId, sessionId: sid, lastSeen: Date.now() }) }) } catch(e) { console.warn('heartbeat POST failed', e) }
         }
   } catch (e) { console.warn('heartbeat sendPing failed', e) }
     }
@@ -359,7 +362,9 @@ export async function leaveClass(code) {
   try {
     const sid = getSessionId()
     const pid = `${code}:${sid}`
-    const payload = { id: pid, classId: code, sessionId: sid, displayName: `Alumno-${sid.slice(0,5)}`, connected: false, lastSeen: Date.now() }
+  // Do not include displayName when leaving; avoid overwriting an existing
+  // displayName with the default alias during disconnect.
+  const payload = { id: pid, classId: code, sessionId: sid, connected: false, lastSeen: Date.now() }
     await fetch(`${API_BASE}/api/participants`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
   } catch (e) { console.warn('leaveClass failed', e) }
   finally { try { stopHeartbeat() } catch(e){ console.warn('stopHeartbeat failed', e) } }
@@ -433,8 +438,13 @@ export function initRealtime(baseUrl) {
   try { console.log('initRealtime: ws raw recv', { raw: String(m.data).slice(0,200) }) } catch(e) { console.warn('initRealtime raw recv log failed', e) }
       try {
         const data = JSON.parse(m.data)
-  try { console.log('initRealtime: ws parsed recv', { type: data && data.type, classId: data && data.classId }) } catch(e) { console.warn('initRealtime parsed recv log failed', e) }
-        window.dispatchEvent(new CustomEvent('aula-realtime', { detail: data }))
+        try { console.log('initRealtime: ws parsed recv (full)', data) } catch(e) { console.warn('initRealtime parsed recv log failed', e) }
+        // Ensure the dispatched detail is a plain JSON-safe object to avoid
+        // accidental field loss when consumers read the event (e.g., Dates or
+        // prototypes). This also makes client-side logging reliable for debug.
+        let safeDetail = data
+        try { safeDetail = JSON.parse(JSON.stringify(data)) } catch (e) { /* if stringify fails, fallback to original */ }
+        window.dispatchEvent(new CustomEvent('aula-realtime', { detail: safeDetail }))
       } catch (e) { console.warn('initRealtime: failed to parse message', e) }
     })
     _ws.addEventListener('close', (ev) => {

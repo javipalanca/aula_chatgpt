@@ -21,7 +21,10 @@ export default function participantsController({ participantService, fetchConnec
       const result = await participantService.saveParticipant(payload)
       if (result && result.skipped) return res.json({ ok: true, skipped: true })
       return res.json({ ok: true })
-    } catch (err) { return res.status(500).json({ ok: false, error: String(err) }) }
+    } catch (err) {
+      console.error('POST /api/participants error', err && err.stack ? err.stack : err)
+      return res.status(500).json({ ok: false, error: String(err) })
+    }
   })
 
   router.post('/reset-scores', async (req, res) => {

@@ -10,8 +10,32 @@ export default class ParticipantsRepo {
 
   async upsert(doc) {
     if (!doc || !doc.id) throw new Error('doc.id required')
-    await this._col().replaceOne({ id: doc.id }, doc, { upsert: true })
-    return doc
+    const id = doc.id
+    // Build $set only for fields that are explicitly defined (avoid overwriting with undefined)
+    const setFields = {}
+    for (const k of Object.keys(doc)) {
+      if (k === 'id') continue
+      const v = doc[k]
+      if (typeof v !== 'undefined') setFields[k] = v
+    }
+
+  // Ensure we always have something to set on insert (id at minimum).
+  // Do NOT include fields like displayName in $setOnInsert when they are
+  // present in the incoming doc, otherwise MongoDB will complain if the
+  // same path appears in both $set and $setOnInsert during upsert.
+  const setOnInsert = { id }
+
+    const update = {}
+    if (Object.keys(setFields).length) update.$set = setFields
+    if (Object.keys(setOnInsert).length) update.$setOnInsert = setOnInsert
+
+    await this._col().updateOne({ id }, update, { upsert: true })
+    // return the current stored document
+    try {
+      return await this.findOneById(id)
+    } catch (e) {
+      return { id, ...setFields }
+    }
   }
 
   async deleteByClass(classId) {
