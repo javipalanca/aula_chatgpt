@@ -116,7 +116,7 @@ export default class ParticipantService {
         this.participantLastBroadcast.set(hbKey, nowB)
         const displayName = (prev && prev.displayName) ? prev.displayName : `Alumno-${String(sessionId).slice(0,5)}`
         if (typeof this.broadcast === 'function') {
-          try { console.debug('ParticipantService.handlePing: broadcasting participant-heartbeat', { classId, sessionId, displayName }) } catch (e) { /* ignore */ }
+          //try { console.debug('ParticipantService.handlePing: broadcasting participant-heartbeat', { classId, sessionId, displayName }) } catch (e) { /* ignore */ }
           this.broadcast({ type: 'participant-heartbeat', classId, sessionId, displayName, lastSeen: new Date(), connected: true }, classId)
         }
       }

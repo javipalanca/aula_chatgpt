@@ -202,7 +202,7 @@ export default function useTeacherDashboard() {
       setTimerRunning(false)
       setLiveAnswers(prev => ({ ...prev, [d.questionId]: { total: Object.values(d.distribution || {}).reduce((a,b)=>a+b,0), counts: d.distribution || {} } }))
     },
-    onParticipantHeartbeat: (d) => {
+  onParticipantHeartbeat: (d) => {
       setParticipants(prev => {
         const copy = (prev || []).slice()
         const idx = copy.findIndex(p => p.sessionId === d.sessionId)
@@ -213,6 +213,22 @@ export default function useTeacherDashboard() {
         else copy[idx] = { ...copy[idx], ...entry }
         return copy
       })
+    }
+    ,
+    // react to a server-side class reset so the teacher UI clears in-memory state
+  onClassReset: (_cls) => {
+      try {
+        // Refresh classes from remote cache and clear running question state
+        setClasses(listClasses())
+        setQuestionRunning(null)
+        setLastQuestionResults(null)
+        setLiveAnswers({})
+        setSelectedCorrect(null)
+        setAnsweredQuestionIds(new Set())
+        setBlockViewIndex(0)
+        try { fetchParticipants() } catch(e) { console.warn('fetchParticipants after class-reset failed', e) }
+        toast('Clase reiniciada (servidor)')
+      } catch (e) { console.warn('onClassReset handler failed', e) }
     }
   })
 
