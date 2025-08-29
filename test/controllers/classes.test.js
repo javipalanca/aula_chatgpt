@@ -31,4 +31,27 @@ describe('classes controller', () => {
     expect(res.status).toBe(200)
     expect(classesRepo.upsert).toHaveBeenCalled()
   })
+
+  it('POST /api/classes/:id/reset calls service.resetClass and returns new class', async () => {
+    const fakeClass = { id: 'C1', meta: { currentBlockIndex: 0 } }
+    // create controller with a classService that has resetClass
+    const classesController = classesControllerFactory({ classService: { list: classesRepo.find, get: classesRepo.findById, create: classesRepo.upsert, update: classesRepo.update, delete: classesRepo.deleteById, resetClass: vi.fn().mockResolvedValue(fakeClass) } })
+    app = createApp()
+    app.use('/api/classes', classesController)
+
+    const res = await request(app).post('/api/classes/C1/reset')
+    expect(res.status).toBe(200)
+    expect(res.body.ok).toBe(true)
+    expect(res.body.class).toEqual(fakeClass)
+  })
+
+  it('POST /api/classes/:id/reset returns 500 when resetClass throws', async () => {
+    const classesController = classesControllerFactory({ classService: { list: classesRepo.find, get: classesRepo.findById, create: classesRepo.upsert, update: classesRepo.update, delete: classesRepo.deleteById, resetClass: vi.fn().mockRejectedValue(new Error('boom')) } })
+    app = createApp()
+    app.use('/api/classes', classesController)
+
+    const res = await request(app).post('/api/classes/C1/reset')
+    expect(res.status).toBe(500)
+    expect(res.body.ok).toBe(false)
+  })
 })

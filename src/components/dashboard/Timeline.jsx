@@ -82,7 +82,10 @@ export function Timeline({ classData, blockViewIndex, setBlockViewIndex, questio
             <div className="flex items-center justify-between gap-4 px-2 w-full">
               {currentQuestions.map((q, i) => {
                 const isActive = questionRunning && questionRunning.payload && Number(questionRunning.payload.blockIndex) === blockIndex && Number(questionRunning.payload.questionIndex) === i;
-                const isAnswered = answeredQuestionIds.has(q.id);
+                // Prefer askedQuestions stored in class meta (server-authoritative). Fall back to answeredQuestionIds.
+                const askedMap = (classData && classData.meta && classData.meta.askedQuestions) || {}
+                const isAskedInMeta = !!askedMap[q.id]
+                const isAnswered = isAskedInMeta || answeredQuestionIds.has(q.id);
                 const baseClasses = 'w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium shadow-sm transition-transform';
                 const colorClass = isActive
                   ? 'bg-yellow-400 text-black ring-2 ring-yellow-300 scale-105'

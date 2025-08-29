@@ -28,6 +28,7 @@ import diagnosisControllerFactory from './controllers/diagnosis.js'
 import questionsControllerFactory from './controllers/questions.js'
 import BroadcastService from './services/BroadcastService.js'
 import ClassService from './services/ClassService.js'
+import { getDefaultMeta } from './lib/meta.js'
 import ChallengesService from './services/ChallengesService.js'
 import ProgressService from './services/ProgressService.js'
 import SettingsService from './services/SettingsService.js'
@@ -84,7 +85,7 @@ try {
   // Instantiate services now that broadcast and in-memory maps exist
   const participantService = new ParticipantService({ participantsRepo, broadcast: (d, cid) => broadcastService.publish(d, cid), participantLastPersist, participantLastBroadcast, options: { minPersistMs: PARTICIPANT_MIN_PERSIST_MS, minBroadcastMs: PARTICIPANT_BROADCAST_MIN_MS } })
   const answerService = new AnswerService({ answersRepo, participantsRepo, evaluator: llmEvaluator, broadcast: (d, cid) => broadcastService.publish(d, cid) })
-  const classService = new ClassService({ classesRepo })
+  const classService = new ClassService({ classesRepo, answersRepo, participantService, broadcastService, getDefaultMeta })
   const challengesService = new ChallengesService({ challengesRepo, broadcast: (d, cid) => broadcastService.publish(d, cid), activeQuestions })
   const progressService = new ProgressService({ progressRepo })
   const settingsService = new SettingsService({ settingsRepo })

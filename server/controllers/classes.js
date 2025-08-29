@@ -32,5 +32,16 @@ export default function classesController({ classesRepo, classService } = {}) {
     } catch (e) { return res.status(500).json({ ok: false, error: String(e) }) }
   })
 
+  // Atomic reset endpoint: reset class meta, delete answers (optional) and reset participant scores
+  router.post('/:id/reset', async (req, res) => {
+    const id = req.params.id
+    try {
+  const newDoc = await service.resetClass(id)
+  return res.json({ ok: true, class: newDoc })
+    } catch (e) {
+      return res.status(500).json({ ok: false, error: String(e) })
+    }
+  })
+
   return router
 }
