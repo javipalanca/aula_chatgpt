@@ -90,6 +90,7 @@ export default function TeacherDashboard() {
         onToggleActive={() => handleToggleActiveClass(selected)}
         onDelete={() => handleDeleteClass(selected)}
         onRestartGame={handleRestartGame}
+  onExit={() => setSelected(null)}
       />
 
       <FancyCard className="p-6 mt-4">

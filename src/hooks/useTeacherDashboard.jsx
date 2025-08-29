@@ -505,7 +505,15 @@ export default function useTeacherDashboard() {
       await persistClassMeta(selected, meta)
       setClasses(listClasses())
       setBlockViewIndex(next)
-      toast('Siguiente bloque')
+  // Clear the "next block" UI state so teacher can launch the first question of the new block
+  setShowNextBlockButton(false)
+  setShowFinishGameButton(false)
+  setQuestionRunning(null)
+  setLastQuestionResults(null)
+  setLiveAnswers({})
+  setSelectedCorrect(null)
+  setAnsweredQuestionIds(new Set())
+  toast('Siguiente bloque')
     } catch (e) { console.error('handleNextBlock failed', e); toast('No se pudo avanzar de bloque') }
   }
 
