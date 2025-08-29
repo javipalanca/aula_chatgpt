@@ -91,6 +91,7 @@ export default function TeacherDashboard() {
         onDelete={() => handleDeleteClass(selected)}
         onRestartGame={handleRestartGame}
   onExit={() => setSelected(null)}
+  onShowCode={handleShowCode}
       />
 
       <FancyCard className="p-6 mt-4">

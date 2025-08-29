@@ -2,7 +2,7 @@
 import React from 'react';
 import { Button } from '../ui';
 
-export function DashboardHeader({ classData, onDelete, onRestartGame, onExit }) {
+export function DashboardHeader({ classData, onDelete, onRestartGame, onExit, onShowCode }) {
 
   return (
     <div className="mb-2 flex items-center justify-between">
@@ -14,9 +14,10 @@ export function DashboardHeader({ classData, onDelete, onRestartGame, onExit }) 
       </div>
 
       <div className="flex items-center gap-2">
-        <Button onClick={onRestartGame}>Reiniciar juego</Button>
+  <Button onClick={onRestartGame}>Reiniciar juego</Button>
         <Button onClick={onDelete} variant="destructive">Borrar</Button>
-        <Button onClick={onExit} variant="ghost">Salir</Button>
+  <Button onClick={() => onShowCode && onShowCode(classData.code || classData.id)} variant="outline">Mostrar código</Button>
+  <Button onClick={onExit} variant="ghost">Salir</Button>
       </div>
     </div>
   );
