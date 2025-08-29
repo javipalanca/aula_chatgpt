@@ -48,8 +48,10 @@ export default class ParticipantService {
     await this.participantsRepo.resetScores(classId)
     try {
       if (typeof this.broadcast === 'function') {
-        const docs = await this.fetchConnectedParticipants(classId, { includeDisconnected: true })
-        this.broadcast({ type: 'participants-updated', classId, participants: docs }, classId)
+  // After resetting scores we broadcast the currently connected
+  // participants (exclude disconnected) to avoid surfacing ghost entries.
+  const docs = await this.fetchConnectedParticipants(classId, { includeDisconnected: false })
+  this.broadcast({ type: 'participants-updated', classId, participants: docs }, classId)
       }
     } catch (e) { /* ignore */ }
     return { ok: true }

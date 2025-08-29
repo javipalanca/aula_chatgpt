@@ -58,6 +58,15 @@ export default class QuestionService {
       } else if (evalMode === 'open' || evalMode === 'prompt') {
         const evalPromises = docs.map(async (a) => {
           try {
+            // If this answer already contains an evaluation with awardedPoints,
+            // assume it was already processed (by AnswerService) and do not
+            // award again. Still include the existing evaluation in the results.
+            if (a.evaluation && typeof a.evaluation.awardedPoints === 'number' && a.evaluation.awardedPoints > 0) {
+              const existingScore = (typeof a.evaluation.score === 'number') ? a.evaluation.score : Number(a.evaluation.score || 0)
+              const scoreFractionExisting = (typeof existingScore === 'number' && !isNaN(existingScore)) ? Math.max(0, Math.min(1, (existingScore > 1 ? existingScore / 100 : existingScore))) : 0
+              return { sessionId: a.sessionId, score: scoreFractionExisting, feedback: a.evaluation.feedback || '', awardedPoints: a.evaluation.awardedPoints }
+            }
+
             const answerText = Array.isArray(a.answer) ? a.answer.join(', ') : String(a.answer || '')
             const evalRes = await this.evaluator.evaluate((activeQuestion && activeQuestion.question && activeQuestion.question.payload) ? activeQuestion.question.payload : {}, answerText)
             const _rawScore = (typeof evalRes.score === 'number') ? evalRes.score : Number(evalRes.score || 0)
@@ -66,7 +75,12 @@ export default class QuestionService {
             const startedAt = (activeQuestion && activeQuestion.startedAt) ? activeQuestion.startedAt : (answerTs - (totalDurationSec * 1000))
             const timeTakenMs = Math.max(0, answerTs - startedAt)
             const percent = Math.min(1, timeTakenMs / (totalDurationSec * 1000))
-            const awarded = Math.round((Number(points) || 0) * scoreFraction * Math.max(0, 1 - percent))
+            // For LLM evaluations treat evaluator score as percentage of points. Apply time decay
+            // only if payload.timeDecay is true (default true unless explicitly false)
+            const payload = (activeQuestion && activeQuestion.question && activeQuestion.question.payload) ? activeQuestion.question.payload : {}
+            const applyTimeDecay = (typeof payload.timeDecay === 'boolean') ? payload.timeDecay : true
+            const timeMultiplier = applyTimeDecay ? Math.max(0, 1 - percent) : 1
+            const awarded = Math.round((Number(points) || 0) * scoreFraction * timeMultiplier)
             if (awarded > 0) await this.participantsRepo.incScore(classId, a.sessionId, awarded)
             return { sessionId: a.sessionId, score: scoreFraction, feedback: evalRes.feedback || '', awardedPoints: awarded }
           } catch (e) { return { sessionId: a.sessionId, score: 0, feedback: 'error', awardedPoints: 0 } }

@@ -1,8 +1,21 @@
 import { useEffect } from 'react'
 
-// useRealtime: centraliza la suscripción al evento `aula-realtime`.
-// selected: class id currently selected
-// callbacks: { onParticipantsUpdated, onQuestionLaunched, onAnswersCount, onQuestionResults, onParticipantHeartbeat }
+/**
+ * useRealtime (legacy-style callback variant)
+ * -----------------------------------------
+ * A small hook that listens to `window` CustomEvents named `aula-realtime`
+ * and calls the corresponding callback functions provided in `callbacks`.
+ *
+ * Blocks:
+ * - imports: useEffect
+ * - onRealtime: map event types to callback functions and filter by `selected` class
+ * - effect: register/remove the `aula-realtime` listener and keep dependencies
+ *
+ * Note: This file offers an alternative signature used in some parts of the
+ * codebase where an object of callbacks is more convenient than a single
+ * handler function. Prefer `useRealtime.js` (single handler + opts) for most
+ * new code, but keep this one for compatibility.
+ */
 export default function useRealtime(selected, callbacks = {}) {
   useEffect(() => {
     function onRealtime(e) {

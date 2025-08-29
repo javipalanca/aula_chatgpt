@@ -4,7 +4,21 @@ import { VERIF_QUIZ, ETHICS_SCENARIOS, BAD_PROMPTS } from '../lib/data'
 import { toast } from '../components/Toaster'
 import useRealtime from './useRealtime'
 
-// Hook que encapsula toda la lógica de TeacherDashboard
+/**
+ * useTeacherDashboard
+ * -------------------
+ * Centralized hook that powers the teacher UI. It manages classes, the
+ * currently running question, timers, participants, live answers and
+ * exposes action handlers used by the TeacherDashboard component.
+ *
+ * Major blocks:
+ * - state declarations: all UI state used by the teacher dashboard
+ * - helper mappers: functions to convert static datasets into question objects
+ * - effects: initialization (load classes, sync remote), polling and subscription
+ * - realtime handlers: delegated to `useRealtime` to react to student events
+ * - actions: functions that launch questions, reveal results, create classes, etc.
+ * - return: public API consumed by the UI
+ */
 export default function useTeacherDashboard() {
   const [classes, setClasses] = useState([])
   const [selected, setSelected] = useState(null)
@@ -237,9 +251,15 @@ export default function useTeacherDashboard() {
     // If this reveal is for the special end-of-game marker, keep the displayed secondsLeft
     const isGameEnd = questionRunning && questionRunning.payload && questionRunning.payload.type === 'game-ended'
     if (!isGameEnd) setSecondsLeft(0)
-    const preferred = preferredAnswer || questionRunning?.payload?.correctAnswer;
-    const correct = preferred || prompt('Respuesta correcta (texto exacto)')
-    if (!correct) return
+    const preferred = preferredAnswer || questionRunning?.payload?.correctAnswer
+    const qPayload = (questionRunning && questionRunning.payload) ? questionRunning.payload : {}
+    const evalMode = (qPayload && typeof qPayload.evaluation === 'string') ? qPayload.evaluation : ((qPayload && (qPayload.source === 'BAD_PROMPTS' || qPayload.source === 'PROMPTS')) ? 'prompt' : 'mcq')
+    // Never ask the teacher: obtain correct answer from question payload fields
+    const fromPayload = (qPayload && (typeof qPayload.correctAnswer !== 'undefined')) ? qPayload.correctAnswer : (qPayload && (typeof qPayload.correct !== 'undefined') ? qPayload.correct : null)
+    const correct = (typeof preferred !== 'undefined' && preferred !== null) ? preferred : fromPayload
+    if ((evalMode === 'mcq' || evalMode === 'redflags') && (typeof correct === 'undefined' || correct === null)) {
+      return toast('No se encontró la respuesta correcta en la pregunta. Revisa la definición en data.js')
+    }
     try {
       try {
         const res = await revealQuestion(selected, questionRunning.id, correct)

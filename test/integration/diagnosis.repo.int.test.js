@@ -10,7 +10,7 @@ describe('DiagnosisRepo integration (mongodb-memory-server)', () => {
     mongod = await MongoMemoryServer.create()
     const uri = mongod.getUri()
     await connectDb({ uri, dbName: 'testdb' })
-  })
+  }, 20000)
 
   afterAll(async () => {
     await closeDb()

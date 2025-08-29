@@ -61,7 +61,9 @@ export default class ClassService {
         const cls = await this.get(id)
         this.broadcastService.publish({ type: 'class-reset', classId: id, class: cls }, id)
         if (this.participantService && typeof this.participantService.fetchConnectedParticipants === 'function') {
-          const parts = await this.participantService.fetchConnectedParticipants(id, { includeDisconnected: true })
+          // After a class reset we want to broadcast only currently connected
+          // participants to avoid showing stale/disconnected records as "ghosts".
+          const parts = await this.participantService.fetchConnectedParticipants(id, { includeDisconnected: false })
           this.broadcastService.publish({ type: 'participants-updated', classId: id, participants: parts }, id)
         }
       }

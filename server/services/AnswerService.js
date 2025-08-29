@@ -9,9 +9,10 @@ export default class AnswerService {
 
   async submitAnswer({ classId, sessionId, questionId, answer, evaluation = null, activeQuestion = null } = {}) {
     if (!classId || !sessionId || !questionId) throw new Error('classId, sessionId and questionId required')
-    const id = `${classId}:${sessionId}:${questionId}`
-    const doc = { id, classId, sessionId, questionId, answer, created_at: new Date() }
-    await this.answersRepo.upsert(doc)
+  const id = `${classId}:${sessionId}:${questionId}`
+  const existing = (this.answersRepo && typeof this.answersRepo.findById === 'function') ? await this.answersRepo.findById(id) : null
+  const doc = { id, classId, sessionId, questionId, answer, created_at: new Date() }
+  await this.answersRepo.upsert(doc)
     try {
       if (typeof this.broadcast === 'function') this.broadcast({ type: 'answers-updated', classId, questionId, answer: doc }, classId)
     } catch (e) { /* ignore */ }
@@ -37,7 +38,7 @@ export default class AnswerService {
         ? questionPayload.evaluation
         : ((questionPayload && (questionPayload.source === 'BAD_PROMPTS' || questionPayload.source === 'PROMPTS')) ? 'prompt' : 'mcq')
 
-      const computeAndApplyAward = async (rawScore, feedback = '', source = 'server') => {
+  const computeAndApplyAward = async (rawScore, feedback = '', source = 'server') => {
         const raw = Number(rawScore || 0)
         const scoreFraction = Math.max(0, Math.min(1, (raw > 1 ? raw / 100 : raw)))
         const answerTs = doc.created_at ? (new Date(doc.created_at)).getTime() : Date.now()
@@ -46,11 +47,22 @@ export default class AnswerService {
         const timeTakenMs = Math.max(0, answerTs - startedAt)
         const percent = Math.min(1, timeTakenMs / (totalDurationSec * 1000))
         const points = (questionPayload && Number(questionPayload.points)) ? Number(questionPayload.points) : 100
-        const awarded = Math.round((Number(points) || 0) * scoreFraction * Math.max(0, 1 - percent))
+  // For LLM evaluations (prompt/open) we treat the evaluator's score as an absolute
+  // percentage of the question points. If the question payload explicitly disables
+  // timeDecay, do not prorate by response time; otherwise apply timeDecay.
+  const isLLM = (questionPayload && (questionPayload.evaluation === 'prompt' || questionPayload.evaluation === 'open' || questionPayload.source === 'PROMPTS' || questionPayload.source === 'BAD_PROMPTS'))
+  const applyTimeDecay = isLLM ? (typeof questionPayload.timeDecay === 'boolean' ? questionPayload.timeDecay : true) : (typeof questionPayload.timeDecay === 'boolean' ? questionPayload.timeDecay : true)
+  const timeMultiplier = applyTimeDecay ? Math.max(0, 1 - percent) : 1
+  const awarded = Math.round((Number(points) || 0) * scoreFraction * timeMultiplier)
         if (awarded > 0 && this.participantsRepo && typeof this.participantsRepo.incScore === 'function') {
-          try { await this.participantsRepo.incScore(classId, sessionId, awarded) } catch (e) { /* ignore score failures */ }
+          try {
+            // idempotency: if existing answer already had awardedPoints, skip incScore
+            if (!(existing && existing.evaluation && typeof existing.evaluation.awardedPoints === 'number' && existing.evaluation.awardedPoints > 0)) {
+              await this.participantsRepo.incScore(classId, sessionId, awarded)
+            }
+          } catch (e) { /* ignore score failures */ }
         }
-        // persist evaluation attached to the answer
+        // persist evaluation attached to the answer (including awardedPoints)
         try { await this.answersRepo.upsert({ ...doc, evaluation: { score: scoreFraction, feedback: feedback || '', awardedPoints: awarded, evaluatedAt: new Date(), source } }) } catch (e) { /* ignore */ }
         // broadcast evaluation
         try { if (typeof this.broadcast === 'function') this.broadcast({ type: 'answer-evaluated', classId, questionId, sessionId, score: scoreFraction, feedback: feedback || '', awardedPoints: awarded, source }, classId) } catch (e) { /* ignore */ }

@@ -1,10 +1,18 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
-import { initRealtime, subscribeToClass, unsubscribeFromClass, joinClass, submitAnswer, getSessionId, listClassParticipants } from '../lib/storage'
-import { startHeartbeat, stopHeartbeat, leaveClass } from '../lib/storage'
-import { Button, clsx } from '../components/ui'
-import { Bar } from 'react-chartjs-2'
+import { getSessionId } from '../lib/storage'
+// Removed unused imports
+import { Button } from '../components/ui'
+
 import { Chart as ChartJS, BarElement, CategoryScale, LinearScale, Tooltip, Legend } from 'chart.js'
 import ChatGPT from '../components/ChatGPT';
+import useRealtime from '../hooks/useRealtime'
+import useQuestionTimer from '../hooks/useQuestionTimer'
+import OptionsList from '../components/OptionsList'
+import QuestionHeader from '../components/QuestionHeader'
+import PromptEditor from '../components/PromptEditor'
+import ScoreOverlay from '../components/ScoreOverlay'
+import useSubmitAnswer from '../hooks/useSubmitAnswer'
+import useParticipants from '../hooks/useParticipants'
 ChartJS.register(BarElement, CategoryScale, LinearScale, Tooltip, Legend)
 
 export default function StudentView({ classCode, displayName, onBack }) {
@@ -12,6 +20,8 @@ export default function StudentView({ classCode, displayName, onBack }) {
   const [currentQuestion, setCurrentQuestion] = useState(null)
   const [secondsLeft, setSecondsLeft] = useState(0)
   const [hasAnswered, setHasAnswered] = useState(false)
+  const [timerStarted, setTimerStarted] = useState(false)
+  const [revealed, setRevealed] = useState(false)
   const [answersCount, setAnswersCount] = useState(0)
   const [score, setScore] = useState(0)
   const [userAnswer, setUserAnswer] = useState(null)
@@ -20,111 +30,93 @@ export default function StudentView({ classCode, displayName, onBack }) {
   const [promptSubmitted, setPromptSubmitted] = useState(false)
   const [displayedEvaluationResult, setDisplayedEvaluationResult] = useState(null);
   const [correctAnswer, setCorrectAnswer] = useState(null)
-  const [participants, setParticipants] = useState([])
+  // participants are managed by the hook to avoid duplicated state and loops
+  // participants will come from the participants hook to avoid state duplication
   const [showScoresOverlay, setShowScoresOverlay] = useState(false)
   const currentQuestionRef = useRef(null)
+  const { secondsLeft: hookSecondsLeft, start: startTimer, stop: stopTimer } = useQuestionTimer(currentQuestion)
+  const { submitAnswer: submitAnswerHook } = useSubmitAnswer()
 
-  useEffect(()=>{
-    if (!classCode) return
-    // ensure websocket ready
-    initRealtime()
-  // join the class via API
-  ;(async () => {
-      try {
-  await joinClass(classCode, displayName || `Alumno-${getSessionId().slice(0,5)}`)
-  // start heartbeat to mark student as connected periodically (every 5s)
-  try { startHeartbeat(classCode, 5000) } catch(e) { console.warn('startHeartbeat failed', e) }
-      } catch (e) {
-        console.warn('joinClass failed', e)
-      }
-    })()
-    // subscribe via websocket to class events
-  const trySub = () => subscribeToClass(classCode, { displayName: displayName || `Alumno-${getSessionId().slice(0,5)}` })
-    trySub()
-
-    function onRealtime(e) {
-      const d = e.detail || {}
-      try { console.log('StudentView received realtime', d) } catch(e) { console.warn('StudentView log failed', e) }
-      if (d.classId !== classCode) return
-      // Use the ref to read the latest currentQuestion inside this listener to avoid stale closures
-      const cq = currentQuestionRef.current
-      if (d.type === 'question-launched') {
-        setCurrentQuestion(d.question)
-        // Prefer top-level duration (server may copy payload.duration to question.duration for students)
-        const announcedDuration = (d.question && typeof d.question.duration === 'number') ? Number(d.question.duration) : (d.question.payload && typeof d.question.payload.duration === 'number' ? Number(d.question.payload.duration) : 30)
-        setSecondsLeft(announcedDuration)
-        setHasAnswered(false)
-        // distribution handled on teacher side; reset local counters
-        setAnswersCount(0)
-        setUserAnswer(null)
-        setPromptText('')
-        setSubmittedPrompt(null)
-        setPromptSubmitted(false)
-        setCorrectAnswer(null)
-      }
-      if (d.type === 'answers-count' && d.questionId && cq && d.questionId === cq.id) {
-        setAnswersCount(d.total || 0)
-      }
-      if (d.type === 'question-results') {
-        // Log for debugging
-        try { console.debug('StudentView question-results received', { questionId: d.questionId, currentQuestionId: cq && cq.id, raw: d }) } catch(e) { /* ignore */ }
-        // If it's for the current question, or if there's no locally active question but a class-level reveal
-        // intended for the whole class (questionId might be undefined), stop the timer and show results.
-        const isForCurrent = !cq || (d.questionId && cq && d.questionId === cq.id) || (d.classId === classCode && !d.questionId)
-        if (isForCurrent) {
-          // stop local timer and show results
-          setSecondsLeft(0)
-          setHasAnswered(true)
-          // distribution and correctAnswer come from server; update correctAnswer
-          setCorrectAnswer(d.correctAnswer)
-          // optionally show awarded points in payload
-          if (d.updatedScores) {
-            const me = d.updatedScores.find(s => s.sessionId === getSessionId())
-            if (me) setScore(me.score || 0)
-          }
-          // If evaluations were included (open/prompt), display them
-          if (Array.isArray(d.evaluations)) {
-            const mine = d.evaluations.find(x => x.sessionId === getSessionId())
-            if (mine) { setDisplayedEvaluationResult(mine); console.info('My evaluation:', mine) }
-          }
+  // Use a stable, memoized realtime handler to avoid re-renders caused by
+  // inline callbacks. The useRealtime hook forwards events to the latest
+  // handler via ref, so we can capture events here and update state.
+  useRealtime(classCode, (d) => {
+    const cq = currentQuestionRef.current
+    if (!d) return
+    if (d.type === 'question-launched') {
+      setCurrentQuestion(d.question)
+  // compute announced duration immediately to avoid a race where
+  // the local secondsLeft remains 0 before the timer starts and
+  // triggers the reveal-on-zero effect prematurely
+  const announcedDuration = (d.question && typeof d.question.duration === 'number') ? Number(d.question.duration) : (d.question && d.question.payload && typeof d.question.payload.duration === 'number' ? Number(d.question.payload.duration) : 30)
+  setSecondsLeft(announcedDuration)
+  // mark timer as requested; an effect will actually call startTimer()
+  setTimerStarted(true)
+      setHasAnswered(false)
+  setRevealed(false)
+      setAnswersCount(0)
+      setUserAnswer(null)
+      setPromptText('')
+      setSubmittedPrompt(null)
+      setPromptSubmitted(false)
+      setCorrectAnswer(null)
+    } else if (d.type === 'answers-count') {
+      if (d.questionId && cq && d.questionId === cq.id) setAnswersCount(d.total || 0)
+    } else if (d.type === 'question-results') {
+      const isForCurrent = !cq || (d.questionId && cq && d.questionId === cq.id) || (d.classId === classCode && !d.questionId)
+      if (isForCurrent) {
+        stopTimer()
+  setTimerStarted(false)
+  setHasAnswered(true)
+  setCorrectAnswer(d.correctAnswer)
+  setRevealed(true)
+        if (d.updatedScores) {
+          const me = d.updatedScores.find(s => s.sessionId === getSessionId())
+          if (me) setScore(me.score || 0)
+        }
+        if (Array.isArray(d.evaluations)) {
+          const mine = d.evaluations.find(x => x.sessionId === getSessionId())
+          if (mine) setDisplayedEvaluationResult(mine)
         }
       }
-      if (d.type === 'participants-updated') {
-        try { setParticipants(d.participants || []) } catch(e) { /* ignore */ }
-        try {
-          const me = (d.participants || []).find(p => p.sessionId === getSessionId())
-          if (me) setScore(me.score || 0)
-        } catch (e) { /* ignore */ }
+    } else if (d.type === 'participants-updated') {
+      // participants updated: refresh hook cache and update local score if provided
+      try {
+        if (partsHook && partsHook.refresh) partsHook.refresh().catch(()=>{})
+      } catch(e) { /* ignore */ }
+      if (Array.isArray(d.participants)) {
+        const me = d.participants.find(p => p.sessionId === getSessionId())
+        if (me) setScore(me.score || 0)
       }
     }
+  })
 
-    window.addEventListener('aula-realtime', onRealtime)
-    // on unload or leaving this view, inform server we left and stop heartbeat
-    const cleanup = async () => {
-      try { unsubscribeFromClass(classCode) } catch(e) { console.warn('unsubscribeFromClass failed', e) }
-      try { await leaveClass(classCode) } catch(e) { console.warn('leaveClass on cleanup failed', e) }
-      try { stopHeartbeat() } catch(e) { console.warn('stopHeartbeat on cleanup failed', e) }
-      try { window.removeEventListener('aula-realtime', onRealtime) } catch(e) { console.warn('remove aula-realtime listener failed', e) }
-    }
-    window.addEventListener('beforeunload', cleanup)
-    return () => { cleanup() }
-  }, [classCode])
+  // participants hook: join/start heartbeat and initial fetch + refresh helper.
+  // Use partsHook.participants directly when rendering to avoid duplication.
+  const partsHook = useParticipants(classCode, displayName)
 
-  // keep a ref in sync with the currentQuestion so the realtime listener sees latest value
+  // keep a ref in sync with the currentQuestion so realtime handlers see latest value
   useEffect(() => { currentQuestionRef.current = currentQuestion }, [currentQuestion])
 
-  // local seconds countdown
+  // ensure timerStarted resets if question cleared
+  useEffect(()=>{ if (!currentQuestion) setTimerStarted(false) }, [currentQuestion])
+
+  // start timer after currentQuestion state has been applied when a launch was requested
   useEffect(()=>{
+    if (!timerStarted) return
     if (!currentQuestion) return
-    if (secondsLeft <= 0) return
-    const t = setInterval(()=> setSecondsLeft(s => Math.max(0, s-1)), 1000)
-    return () => clearInterval(t)
-  }, [currentQuestion, secondsLeft])
+    try { startTimer() } catch(e) { /* ignore */ }
+  }, [timerStarted, currentQuestion, startTimer])
+
+  // sync secondsLeft with hook
+  useEffect(()=>{ setSecondsLeft(hookSecondsLeft) }, [hookSecondsLeft])
 
   // If timer reaches zero but no question-results arrived with correctAnswer,
   // try to fetch stored challenge to find payload.correctAnswer and reveal locally.
   useEffect(()=>{
     if (!currentQuestion) return
+    // only attempt to reveal stored correct answer when the timer was actually started
+    if (!timerStarted) return
     if (secondsLeft > 0) return
     if (correctAnswer) return
     // attempt to fetch the challenge from the storage API
@@ -138,6 +130,7 @@ export default function StudentView({ classCode, displayName, onBack }) {
         if (found && found.payload && typeof found.payload.correctAnswer !== 'undefined') {
           setCorrectAnswer(found.payload.correctAnswer)
           setHasAnswered(true)
+          setRevealed(true)
         }
       } catch (e) { /* ignore fetch errors */ }
     })()
@@ -149,7 +142,7 @@ export default function StudentView({ classCode, displayName, onBack }) {
     if (!currentQuestion || hasAnswered) return
     setUserAnswer(ans)
     try {
-      await submitAnswer(classCode, getSessionId(), currentQuestion.id, ans)
+  await submitAnswerHook(classCode, getSessionId(), currentQuestion.id, ans)
       setHasAnswered(true)
     } catch (e) { console.warn('submitAnswer failed', e) }
   }
@@ -159,7 +152,7 @@ export default function StudentView({ classCode, displayName, onBack }) {
     const text = String(promptText || '').trim()
     if (!text) return
     try {
-      await submitAnswer(classCode, getSessionId(), currentQuestion.id, text)
+  await submitAnswerHook(classCode, getSessionId(), currentQuestion.id, text)
       setSubmittedPrompt(text)
       setHasAnswered(true)
       setPromptSubmitted(true)
@@ -175,30 +168,19 @@ export default function StudentView({ classCode, displayName, onBack }) {
   const score = Math.max(1, Math.min(100, Math.round(fraction * 100)))
   const points = (currentQuestion && currentQuestion.payload && Number(currentQuestion.payload.points)) ? Number(currentQuestion.payload.points) : 100
   const awarded = Math.round((Number(points) || 0) * (fraction))
-    if (awarded > 0) {
-      // Update the local score
-      setScore(s => s + awarded)
-      // Persist the score update to the backend
-      try {
-        fetch(`/api/participants`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: getSessionId(), classId: classCode, scoreDelta: awarded })
-        })
-      } catch (e) { console.warn('score update failed', e) }
-    }
+  // Do NOT mutate authoritative participant score from the client. The server is
+  // responsible for awarding points when it receives the evaluated answer (see
+  // submitEvaluatedAnswer -> AnswerService). We keep a local displayed evaluation
+  // so the student sees the LLM feedback and an estimated awardedPoints, but the
+  // real cumulative score will arrive via the `participants-updated` event from
+  // the server. This avoids double-awarding.
   setDisplayedEvaluationResult({ score, feedback: evaluation.feedback, awardedPoints: awarded });
   }, [currentQuestion, classCode]);
 
   return (
   <div className="min-h-screen flex items-center justify-center bg-black text-white p-6">
       <div className="max-w-4xl w-full text-center">
-        <div className="mb-6">
-          <div className="text-sm opacity-60">Clase: <span className="font-mono">{classCode}</span></div>
-          <div className="text-2xl font-bold mt-2">{displayName || 'Alumno'}</div>
-          <div className="text-sm opacity-60">Puntuación: {score}</div>
-        </div>
+  <QuestionHeader classCode={classCode} displayName={displayName} score={score} onShowScores={async ()=>{ try { if (partsHook && partsHook.refresh) await partsHook.refresh(); setShowScoresOverlay(true) } catch(e){ console.warn('show scores failed', e) } }} />
 
         {!currentQuestion && (
           <div className="p-12 rounded-xl bg-white/5">
@@ -221,80 +203,27 @@ export default function StudentView({ classCode, displayName, onBack }) {
             )}
             <div className="text-3xl font-bold mb-4">{currentQuestion.title}</div>
             {currentQuestion.options && currentQuestion.options.length>0 && (
-              <div className="grid gap-3 mb-6">
-                {currentQuestion.options.map((opt, i) => {
-                  // reveal styling applies only once correctAnswer is known
-                  const revealed = correctAnswer !== null && typeof correctAnswer !== 'undefined'
-                  const isCorrect = revealed && String(correctAnswer) === String(opt)
-                  const isUserChoice = userAnswer === opt
-                  const isWrong = revealed && isUserChoice && !isCorrect
-                  const isPending = !revealed && isUserChoice && hasAnswered
-
-                  return (
-                    <button
-                      key={i}
-                      disabled={revealed}
-                      onClick={()=>handleAnswer(opt)}
-                      className={clsx(
-                        'p-4 rounded text-left transition',
-                        // pending (answered but not revealed) -> yellow
-                        isPending ? 'bg-yellow-400 text-black' : revealed ? 'opacity-90' : 'hover:opacity-95 cursor-pointer',
-                        // final colors when revealed
-                        revealed ? (isCorrect ? 'bg-green-600 text-white' : isWrong ? 'bg-red-600 text-white' : 'bg-white/5') : (!isPending ? 'bg-white/5' : '')
-                      )}
-                    >
-                      {opt}
-                    </button>
-                  )
-                })}
-              </div>
+              <OptionsList options={currentQuestion.options} userAnswer={userAnswer} correctAnswer={correctAnswer} hasAnswered={hasAnswered} onChoose={handleAnswer} revealed={revealed} />
             )}
             {/* Open / prompt evaluation: free-text ChatGPT-like input */}
             {(!currentQuestion.options || currentQuestion.options.length===0) && currentQuestion.payload && ((currentQuestion.payload.evaluation === 'open' || currentQuestion.payload.evaluation === 'prompt') || (currentQuestion.payload.source === 'BAD_PROMPTS' || currentQuestion.payload.source === 'PROMPTS')) && (
               <div className="mb-6">
-                {/* Instructions box: use explicit instructions from payload if present, otherwise show default template */}
-                <div className="mb-3 p-3 rounded border border-slate-700 bg-white/5 text-left">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <div className="text-sm font-semibold">Instrucciones para esta pregunta</div>
-                      {/* Preface specifically for BAD_PROMPTS / PROMPTS */}
-                      { currentQuestion.payload && (currentQuestion.payload.source === 'BAD_PROMPTS' || currentQuestion.payload.source === 'PROMPTS') ? (
-                        <div className="text-xs opacity-85 mt-1 mb-2">Completa el prompt para formular una petición clara y útil. ¡Lo que escribas abajo será tu <i>prompt</i> final!</div>
-                      ) : null }
-                      <div className="text-xs opacity-75 mt-1">
-                        { (currentQuestion.payload && (currentQuestion.payload.instructions || currentQuestion.payload.tip)) ? (
-                          <span>{currentQuestion.payload.instructions || currentQuestion.payload.tip}</span>
-                        ) : (
-                          <span>Redacta un prompt claro incluyendo: rol (quién debe responder), objetivo (qué quieres obtener), contexto breve, formato de salida (lista, esquema, ejemplos) y restricciones (longitud, lenguaje).</span>
-                        ) }
-                      </div>
-                    </div>
-                    <div className="ml-3">
-                      <button className="text-sm px-2 py-1 rounded bg-slate-700/30 hover:bg-slate-700/40" onClick={() => {
-                        const tpl = (currentQuestion.payload && (currentQuestion.payload.template || currentQuestion.payload.instructions)) ? (currentQuestion.payload.template || currentQuestion.payload.instructions) : `Actúa como un experto en la materia. Resume brevemente el contexto, responde con claridad y entrega un ejemplo al final. Formato: 1) Resumen, 2) Puntos clave, 3) Ejemplo.`
-                        try { navigator.clipboard.writeText(tpl) } catch(e) { /* ignore */ }
-                        // also prefill textarea for convenience
-                        setPromptText(tpl)
-                      }}>Copiar plantilla</button>
-                    </div>
-                  </div>
-                </div>
+                <PromptEditor
+                  promptText={promptText}
+                  onChange={setPromptText}
+                  onSubmit={handleSubmitPrompt}
+                  onClear={() => setPromptText('')}
+                  instructions={(currentQuestion.payload && (currentQuestion.payload.instructions || currentQuestion.payload.tip))}
+                  template={(currentQuestion.payload && (currentQuestion.payload.template || currentQuestion.payload.instructions))}
+                  disabled={hasAnswered}
+                  submittedPrompt={submittedPrompt}
+                />
 
-                <div className="text-left mb-2 text-sm opacity-70">Respuesta (puedes escribir un prompt completo):</div>
-                <textarea value={promptText} onChange={e => setPromptText(e.target.value)} rows={6} className="w-full p-3 rounded bg-white/5 text-white mb-2" placeholder="Escribe tu respuesta o prompt aqui..." />
-                <div className="flex gap-2 justify-center">
-                  <Button onClick={handleSubmitPrompt} disabled={hasAnswered || !promptText.trim()}>Enviar</Button>
-                  <Button variant="ghost" onClick={() => { setPromptText('') }} disabled={hasAnswered}>Borrar</Button>
-                </div>
-                {submittedPrompt && (
-                  <div className="mt-3 text-sm opacity-70 text-left">Tu envío: <div className="mt-1 p-2 rounded bg-white/5">{submittedPrompt}</div></div>
-                )}
-
-                {/* Trigger automatic LLM evaluation and submission to server. ChatGPT component
-                    calls /api/evaluate and then submitEvaluatedAnswer; onEvaluated updates UI. */}
+                {/* Trigger automatic LLM evaluation and submission to server via ChatGPT component */}
                 {promptSubmitted && submittedPrompt && (
                   <ChatGPT question={currentQuestion} answer={submittedPrompt} onEvaluated={handleEvaluation} />
                 )}
+
                 {displayedEvaluationResult && (
                   <div className="mt-3 text-left">
                     <div className="space-y-3">
@@ -310,6 +239,7 @@ export default function StudentView({ classCode, displayName, onBack }) {
                     </div>
                   </div>
                 )}
+
                 {correctAnswer && (
                   <div className="mt-3 text-sm opacity-70 text-left">
                     Respuesta correcta: <div className="mt-1 p-2 rounded bg-green-600 text-white">{correctAnswer}</div>
@@ -320,54 +250,15 @@ export default function StudentView({ classCode, displayName, onBack }) {
             <div className="text-2xl font-mono mb-2">{secondsLeft}s</div>
             <div className="text-sm opacity-70">Respuestas recibidas: {answersCount}</div>
             {/* distribution hidden for students (handled in teacher UI) */}
-            <div className="mt-4">
+                <div className="mt-4">
               <div className="flex items-center justify-center gap-2">
                 <Button variant="ghost" onClick={onBack}>Salir</Button>
-                <Button variant="ghost" onClick={async ()=>{
-                  // show scores overlay like the teacher
-                  try {
-                    const parts = await listClassParticipants(classCode)
-                    setParticipants(parts || [])
-                    setShowScoresOverlay(true)
-                  } catch (e) { console.warn('fetch participants for overlay failed', e) }
-                }}>Mostrar puntuación</Button>
               </div>
             </div>
           </div>
         )}
         {showScoresOverlay && (
-          <div className="fixed inset-0 z-80 flex items-center justify-center">
-            <div className="absolute inset-0 bg-black/70" onClick={() => setShowScoresOverlay(false)} />
-            <div className="relative z-10 bg-white rounded-xl p-6 max-w-2xl w-full text-black">
-              <h3 className="text-xl font-bold mb-3">Puntuaciones acumuladas</h3>
-              <div className="mb-4 w-full overflow-x-auto">
-                <div className="flex gap-3 items-stretch" style={{ minWidth: 420, whiteSpace: 'nowrap' }}>
-                  {participants.slice().sort((a,b)=> (b.score||0)-(a.score||0)).slice(0,3).map((p,i) => (
-                    <div key={p.sessionId || i} className="text-center p-3 rounded-lg shadow-lg inline-block text-black" style={{ background: i===0 ? 'linear-gradient(135deg,#FFD54A,#FFD700)' : i===1 ? 'linear-gradient(135deg,#E0E0E0,#C0C0C0)' : 'linear-gradient(135deg,#D4A373,#CD7F32)', width: 220, minWidth: 120 }}>
-                      <div className="text-4xl">{i===0 ? '👑' : i===1 ? '🥈' : '🥉'}</div>
-                      <div className="font-bold mt-2 text-lg truncate">{p.displayName}</div>
-                      <div className="text-sm opacity-80">{p.score || 0} pts</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              <div style={{ height: 220 }}>
-                <Bar options={{ maintainAspectRatio: false, responsive: true, plugins: { legend: { display: false } } }} data={{ labels: participants.slice().sort((a,b)=> (b.score||0)-(a.score||0)).slice(0,10).map(p=>p.displayName), datasets: [{ label: 'Puntos', backgroundColor: participants.slice().sort((a,b)=> (b.score||0)-(a.score||0)).slice(0,10).map((_,i)=> i===0? '#FFD700' : i===1? '#C0C0C0' : i===2? '#CD7F32' : ['#EF4444','#F59E0B','#10B981','#3B82F6','#8B5CF6','#EC4899','#06B6D4','#F97316','#6366F1','#14B8A6'][i%10]), data: participants.slice().sort((a,b)=> (b.score||0)-(a.score||0)).slice(0,10).map(p=>p.score||0) }] }} />
-              </div>
-              <div className="mt-4 space-y-2 max-h-64 overflow-auto">
-                {participants.slice().sort((a,b)=> (b.score||0)-(a.score||0)).map(p=> (
-                  <div key={p.sessionId} className="p-2 rounded-lg border border-slate-200 flex items-center justify-between">
-                    <div>
-                      <div className="font-semibold">{p.displayName}</div>
-                      <div className="text-sm opacity-60">Última: {p.lastSeen ? new Date(p.lastSeen).toLocaleTimeString() : '-'}</div>
-                    </div>
-                    <div className="text-xl font-bold">{p.score || 0}</div>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-4 flex justify-end"><Button onClick={()=> setShowScoresOverlay(false)} variant="ghost">Cerrar</Button></div>
-            </div>
-          </div>
+          <ScoreOverlay participants={(partsHook && partsHook.participants) || []} onClose={() => setShowScoresOverlay(false)} />
         )}
       </div>
     </div>

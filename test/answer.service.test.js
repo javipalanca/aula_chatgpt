@@ -65,6 +65,17 @@ describe('AnswerService', () => {
     expect(types).toContain('answer-evaluated')
   })
 
+  it('LLM evaluation score 20 on 100 maxPoints awards 20 points', async () => {
+    const activeQuestion = { question: { payload: { evaluation: 'prompt', points: 100, duration: 30, timeDecay: false } }, startedAt: Date.now() - 1000 }
+    // evaluator returns 20 (interpreted as 20/100)
+    evaluator.evaluate.mockResolvedValue({ score: 20, feedback: 'low' })
+    await svc.submitAnswer({ classId: 'CLLM', sessionId: 'SLLM', questionId: 'QLLM', answer: 'llm', evaluation: null, activeQuestion })
+    // evaluator called
+    expect(evaluator.evaluate).toHaveBeenCalled()
+    // participantsRepo.incScore should be called with 20 points
+    expect(participantsRepo.incScore).toHaveBeenCalledWith('CLLM', 'SLLM', 20)
+  })
+
   it('submitAnswer rejects when upsert fails', async () => {
     answersRepo.upsert.mockRejectedValue(new Error('DB fail'))
     await expect(svc.submitAnswer({ classId: 'ERR', sessionId: 'E', questionId: 'Q', answer: 'x' })).rejects.toThrow('DB fail')

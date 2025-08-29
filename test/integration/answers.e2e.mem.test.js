@@ -23,7 +23,7 @@ describe('E2E /api/answers with memory DB', () => {
   const answerService = { submitAnswer: async ({ classId, sessionId, questionId, answer }) => { await answersRepo.upsert({ id: `${classId}:${sessionId}:${questionId}`, classId, sessionId, questionId, answer, created_at: new Date().toISOString() }); return { ok: true } } }
   app = createApp()
   app.use('/api/answers', answersControllerFactory({ answerService, answersRepo, activeQuestions: new Map() }))
-  })
+  }, 20000)
 
   afterAll(async () => {
     if (client) await client.close()

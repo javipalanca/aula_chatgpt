@@ -15,7 +15,7 @@ describe('AnswersRepo (mongodb-memory-server)', () => {
     client = new MongoClient(uri)
     await client.connect()
     db = client.db('test')
-  repo = new AnswersRepo({ db })
+    repo = new AnswersRepo({ db })
   })
 
   afterAll(async () => {
