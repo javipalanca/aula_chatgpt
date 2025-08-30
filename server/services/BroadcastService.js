@@ -63,6 +63,7 @@ export default class BroadcastService {
               type: data && data.type,
               classId: targetClassId,
               targets: targets.length,
+              data: data || null,
             });
         }
       } catch (e) {

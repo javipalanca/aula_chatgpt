@@ -32,11 +32,9 @@ export default function questionsController({ questionService } = {}) {
       (evalMode === "mcq" || evalMode === "redflags") &&
       typeof correctAnswer === "undefined"
     ) {
-      return res
-        .status(400)
-        .json({
-          error: "classId and correctAnswer required for this question type",
-        });
+      return res.status(400).json({
+        error: "classId and correctAnswer required for this question type",
+      });
     }
     try {
       if (

@@ -623,6 +623,23 @@ export async function listAnsweredQuestionIds(classId) {
   }
 }
 
+/**
+ * Actualiza los datos de un participante (p. ej. score o progreso) en el
+ * servidor mediante POST al endpoint de participantes.
+ *
+ * Esta función construye el payload con el identificador del participante
+ * (`<classCode>:<sessionId>`), aplica un `scoreDelta` si procede y envía
+ * la información al endpoint remoto. Tras una respuesta exitosa intenta
+ * sincronizar la lista de clases con `syncClassesRemote`.
+ *
+ * @param {string} code Código de la clase
+ * @param {Object} [options] Opciones
+ * @param {string} [options.sessionId] Identificador de sesión del participante. Por defecto se obtiene con `getSessionId()`
+ * @param {number} [options.scoreDelta=0] Incremento de puntuación a aplicar (puede ser 0)
+ * @param {Object} [options.progress={}] Objeto con progreso parcial del participante
+ * @returns {Promise<Object>} Payload enviado al servidor (incluye id, classId, sessionId, scoreDelta, progress, lastSeen)
+ * @throws {Error} Si la petición remota falla (se lanza una excepción con mensaje genérico)
+ */
 export async function postParticipantUpdate(
   code,
   { sessionId = getSessionId(), scoreDelta = 0, progress = {} } = {},
@@ -638,8 +655,6 @@ export async function postParticipantUpdate(
    * @param {Object} [options.progress]
    * @returns {Promise<Object>} Payload enviado
    */
-  if (!API_BASE)
-    throw new Error("postParticipantUpdate requires VITE_STORAGE_API");
   const pid = `${code}:${sessionId}`;
   // send scoreDelta so the server can increment accumulated score
   // Do not set a default displayName here to avoid overwriting an existing
@@ -682,11 +697,7 @@ export function startHeartbeat(classId, intervalMs = 5000) {
     const sendPing = async () => {
       try {
         const sid = getSessionId();
-        if (
-          typeof _ws !== "undefined" &&
-          _ws &&
-          _ws.readyState === WebSocket.OPEN
-        ) {
+        if (isWsOpen()) {
           try {
             _ws.send(JSON.stringify({ type: "ping", classId, sessionId: sid }));
           } catch (e) {
@@ -768,7 +779,6 @@ export async function createChallenge(
   code,
   { title = "Reto", duration = 60, payload = {} } = {},
 ) {
-  if (!API_BASE) throw new Error("createChallenge requires VITE_STORAGE_API");
   const ch = {
     id: `c-${Date.now()}`,
     title,
@@ -806,7 +816,6 @@ export async function createChallenge(
  * @returns {void}
  */
 export function resetClass(code) {
-  if (!API_BASE) throw new Error("resetClass requires VITE_STORAGE_API");
   (async () => {
     try {
       await fetch(`${API_BASE}/api/classes/${encodeURIComponent(code)}`, {
@@ -830,6 +839,21 @@ export { getSessionId };
 
 // --- Realtime (WebSocket) client helper ---
 let _ws = null;
+/**
+ * Helper que indica si el cliente WebSocket está conectado y listo.
+ * Devuelve true si `_ws` está definido y su readyState es `WebSocket.OPEN`.
+ * Usar esta función en lugar de repetir la comprobación larga.
+ * @returns {boolean}
+ */
+function isWsOpen() {
+  try {
+    return (
+      typeof _ws !== "undefined" && _ws && _ws.readyState === WebSocket.OPEN
+    );
+  } catch (e) {
+    return false;
+  }
+}
 /**
  * Inicializa la conexión WebSocket usada para eventos en tiempo real.
  * Devuelve el WebSocket instanciado y reintenta con backoff en caso de
@@ -977,7 +1001,7 @@ export function subscribeToClass(
     }
     const payload = JSON.stringify(payloadObj);
     // if open, send immediately
-    if (_ws && _ws.readyState === WebSocket.OPEN) {
+    if (isWsOpen()) {
       try {
         _ws.send(payload);
         console.log("subscribeToClass: sent subscribe immediately", payloadObj);
@@ -992,7 +1016,7 @@ export function subscribeToClass(
     const sendIfOpen = () => {
       attempts += 1;
       try {
-        if (_ws && _ws.readyState === WebSocket.OPEN) {
+        if (isWsOpen()) {
           try {
             _ws.send(payload);
             console.log(
@@ -1068,7 +1092,6 @@ export async function createQuestion(
     payload = {},
   } = {},
 ) {
-  if (!API_BASE) throw new Error("createQuestion requires VITE_STORAGE_API");
   const q = {
     id,
     title,
@@ -1129,7 +1152,6 @@ export function unsubscribeFromClass(classId) {
  * @returns {Promise<Object>} Payload enviado
  */
 export async function submitAnswer(classId, sessionId, questionId, answer) {
-  if (!API_BASE) throw new Error("submitAnswer requires VITE_STORAGE_API");
   const payload = { classId, sessionId, questionId, answer };
   const r = await fetch(`${API_BASE}/api/answers`, {
     method: "POST",
@@ -1170,11 +1192,7 @@ export async function submitEvaluatedAnswer(
   };
   // Try websocket first for low-latency broadcast
   try {
-    if (
-      typeof _ws !== "undefined" &&
-      _ws &&
-      _ws.readyState === WebSocket.OPEN
-    ) {
+    if (isWsOpen()) {
       try {
         _ws.send(JSON.stringify(payload));
         return payload;
@@ -1224,11 +1242,7 @@ export async function revealQuestion(
 ) {
   // Prefer to send reveal via WebSocket so students receive immediate instruction
   try {
-    if (
-      typeof _ws !== "undefined" &&
-      _ws &&
-      _ws.readyState === WebSocket.OPEN
-    ) {
+    if (isWsOpen()) {
       try {
         _ws.send(
           JSON.stringify({
@@ -1302,11 +1316,7 @@ export async function revealQuestion(
 export async function stopQuestion(classId, questionId) {
   // Prefer to send stop via WebSocket so students receive immediate instruction
   try {
-    if (
-      typeof _ws !== "undefined" &&
-      _ws &&
-      _ws.readyState === WebSocket.OPEN
-    ) {
+    if (isWsOpen()) {
       try {
         _ws.send(JSON.stringify({ type: "stop", classId, questionId }));
         // optimistic: return success and let server broadcast results

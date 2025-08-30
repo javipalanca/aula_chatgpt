@@ -173,8 +173,21 @@ export default class LLMEvaluator {
     if (n > 1) return Math.max(0, Math.min(1, n / 100));
     return Math.max(0, Math.min(1, n));
   }
-
+  getCallerInfo() {
+    // crea Error para leer stack; quitar primeras 3 líneas (this fn + caller)
+    const st = new Error().stack;
+    if (!st) return null;
+    const lines = st
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean);
+    // lines[0] = "Error", lines[1] = this function, lines[2] = caller -> ajusta si hace falta
+    return lines[2] || lines[1] || null;
+  }
   async evaluate(questionPayload = {}, answerText = "") {
+    const caller = this.getCallerInfo();
+    console.log("BroadcastService.publish called by:", caller);
+
     const questionText =
       questionPayload &&
       (questionPayload.title ||
