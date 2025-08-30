@@ -4,9 +4,9 @@
 
 - Componentes y responsabilidades (servidor, WS, DB, profesor, alumno).
 - Flujos completos:
-	- Alumno con evaluación LLM en cliente.
-	- Alumno con evaluación LLM en servidor.
-	- Profesor revela MCQ / redflags.
+  - Alumno con evaluación LLM en cliente.
+  - Alumno con evaluación LLM en servidor.
+  - Profesor revela MCQ / redflags.
 - Eventos WS y endpoints HTTP usados.
 - Formas de datos (participant, answer, question, evaluation).
 - Reglas de puntuación y fórmulas (incluyendo timeDecay).
@@ -37,25 +37,33 @@
 
 - Repositorios: `ParticipantsRepo`, `AnswersRepo`, `ClassesRepo` (MongoDB).
 - Servicios principales:
-	- `AnswerService.submitAnswer`: guarda la respuesta, calcula evaluación si procede (cliente o servidor), aplica puntos mediante `participantsRepo.incScore`, persiste evaluación y broadcast.
-	- `QuestionService.revealQuestion`: para MCQ/redflags calcula premios según `correctAnswer` y `timeDecay`; para `open`/`prompt` puede invocar LLM en batch.
-	- `ParticipantService`: upsert/heartbeat, lista de conectados y broadcast `participants-updated`.
-	- `LLMEvaluator`: integra OpenAI/Ollama y normaliza resultado a 0..1.
-	- `WSManager` / `BroadcastService`: gestionan sockets, suscripciones por `classId` y envían snapshots (enviar snapshot al profesor al suscribirse).
+  - `AnswerService.submitAnswer`: guarda la respuesta, calcula evaluación si procede (cliente o servidor), aplica puntos mediante `participantsRepo.incScore`, persiste evaluación y broadcast.
+  - `QuestionService.revealQuestion`: para MCQ/redflags calcula premios según `correctAnswer` y `timeDecay`; para `open`/`prompt` puede invocar LLM en batch.
+  - `ParticipantService`: upsert/heartbeat, lista de conectados y broadcast `participants-updated`.
+  - `LLMEvaluator`: integra OpenAI/Ollama y normaliza resultado a 0..1.
+  - `WSManager` / `BroadcastService`: gestionan sockets, suscripciones por `classId` y envían snapshots (enviar snapshot al profesor al suscribirse).
 
 ### Base de datos (MongoDB)
 
 - Colecciones: `participants`, `answers`, `classes`/`challenges`.
 - Reglas operativas:
-	- Upserts cuidadosos: no poner la misma ruta en `$set` y `$setOnInsert`.
-	- Incremento de puntuación via `$inc` en `participantsRepo.incScore`.
+  - Upserts cuidadosos: no poner la misma ruta en `$set` y `$setOnInsert`.
+  - Incremento de puntuación via `$inc` en `participantsRepo.incScore`.
 
 ## Formas de datos (ejemplos)
 
 Participant
 
 ```json
-{ "id": "CL:SID", "classId": "CL", "sessionId": "SID", "displayName": "Alicia", "score": 42, "lastSeen": "2025-08-29T...Z", "connected": true }
+{
+  "id": "CL:SID",
+  "classId": "CL",
+  "sessionId": "SID",
+  "displayName": "Alicia",
+  "score": 42,
+  "lastSeen": "2025-08-29T...Z",
+  "connected": true
+}
 ```
 
 Answer
@@ -82,25 +90,37 @@ Question (challenge)
 
 ```json
 {
-	"id": "Q1",
-	"title": "...",
-	"payload": {
-		"source": "open|prompt|mcq",
-		"evaluation": "llm|manual",
-		"correctAnswer": null,
-		"correct": null,
-		"points": 100,
-		"duration": 30,
-		"timeDecay": true
-	},
-	"options": []
+  "id": "Q1",
+  "title": "...",
+  "payload": {
+    "source": "open|prompt|mcq",
+    "evaluation": "llm|manual",
+    "correctAnswer": null,
+    "correct": null,
+    "points": 100,
+    "duration": 30,
+    "timeDecay": true
+  },
+  "options": []
 }
 ```
 
 WS event `participants-updated`
 
 ```json
-{ "type": "participants-updated", "classId": "CL", "participants": [{ "sessionId": "SID", "displayName": "Alicia", "score": 62, "lastSeen": "...", "connected": true }] }
+{
+  "type": "participants-updated",
+  "classId": "CL",
+  "participants": [
+    {
+      "sessionId": "SID",
+      "displayName": "Alicia",
+      "score": 62,
+      "lastSeen": "...",
+      "connected": true
+    }
+  ]
+}
 ```
 
 ## Eventos WS y endpoints HTTP clave
@@ -133,11 +153,11 @@ HTTP endpoints
 2. El cliente llama `submitEvaluatedAnswer` (WS preferido) con payload `{ answer, evaluation: { score, feedback } }`.
 3. `WSManager` recibe el mensaje `answer` y delega a `AnswerService.submitAnswer`.
 4. `AnswerService`:
-	 - Upsertea la respuesta en `AnswersRepo`.
-	 - Si `evaluation` está presente y el `evalMode` es `prompt|open`, llama a `computeAndApplyAward(evaluation.score, ...)`.
-	 - Antes de llamar a `participantsRepo.incScore`, verifica idempotencia: si `answer.evaluation.awardedPoints` ya existe, no vuelve a incScore.
-	 - Llama `participantsRepo.incScore(classId, sessionId, awarded)`.
-	 - Persiste la evaluación junto con `awardedPoints` y hace broadcast `answer-evaluated` y `participants-updated`.
+   - Upsertea la respuesta en `AnswersRepo`.
+   - Si `evaluation` está presente y el `evalMode` es `prompt|open`, llama a `computeAndApplyAward(evaluation.score, ...)`.
+   - Antes de llamar a `participantsRepo.incScore`, verifica idempotencia: si `answer.evaluation.awardedPoints` ya existe, no vuelve a incScore.
+   - Llama `participantsRepo.incScore(classId, sessionId, awarded)`.
+   - Persiste la evaluación junto con `awardedPoints` y hace broadcast `answer-evaluated` y `participants-updated`.
 5. El cliente estudiante recibe `participants-updated` y actualiza la UI con la puntuación autorizada por el servidor.
 
 ### 2) Alumno envía sin evaluación → LLM en servidor
@@ -160,25 +180,25 @@ HTTP endpoints
 - Normalización LLM: `scoreFraction = (raw > 1 ? raw/100 : raw)` luego clamp 0..1.
 - award (LLM o server-eval): `awarded = round(points * scoreFraction * timeMultiplier)`.
 - `timeMultiplier`:
-	- si `timeDecay === false` → `1`.
-	- si `timeDecay === true` → `max(0, 1 - (timeTaken / duration))`.
+  - si `timeDecay === false` → `1`.
+  - si `timeDecay === true` → `max(0, 1 - (timeTaken / duration))`.
 - MCQ award (sin LLM score): `awarded = round(points * timeMultiplier)` para respuestas correctas (fraction = 1).
 
 ## Riesgos y mitigaciones
 
 - Duplicado de puntos (doble `incScore`)
-	- Causa: el cliente persistía `scoreDelta` además del servidor.
-	- Mitigación: eliminar persistencia de `score` desde cliente. Sólo el servidor ejecuta `participantsRepo.incScore`.
-	- Refuerzo: idempotencia en `AnswerService` y `QuestionService` — no incrementar si `answer.evaluation.awardedPoints` ya existe.
+  - Causa: el cliente persistía `scoreDelta` además del servidor.
+  - Mitigación: eliminar persistencia de `score` desde cliente. Sólo el servidor ejecuta `participantsRepo.incScore`.
+  - Refuerzo: idempotencia en `AnswerService` y `QuestionService` — no incrementar si `answer.evaluation.awardedPoints` ya existe.
 
 - Race conditions en broadcasts / snapshots perdidos
-	- Mitigación: al suscribir el profesor enviar snapshot `participants-updated` inmediato desde `WSManager`.
+  - Mitigación: al suscribir el profesor enviar snapshot `participants-updated` inmediato desde `WSManager`.
 
 - Upsert collisions en MongoDB
-	- Mitigación: evitar incluir la misma ruta en `$set` y `$setOnInsert` (fix en `ParticipantsRepo`).
+  - Mitigación: evitar incluir la misma ruta en `$set` y `$setOnInsert` (fix en `ParticipantsRepo`).
 
 - Time-of-check vs time-of-write en awarding
-	- Mitigación: comprobar `awardedPoints` por respuesta al calcular batch awards; considerar lock lógico por `questionId` si es crítico.
+  - Mitigación: comprobar `awardedPoints` por respuesta al calcular batch awards; considerar lock lógico por `questionId` si es crítico.
 
 ## Reglas operativas (resumen)
 
@@ -190,14 +210,14 @@ HTTP endpoints
 ## Guía de pruebas rápidas
 
 - Caso LLM cliente:
-	- Alumno envía respuesta con `evaluation.score = 20` y `points = 100`.
-	- Verificar que `AnswerService` upsertea evaluación con `awardedPoints ≈ 20` y llama `participantsRepo.incScore(classId, sessionId, 20)` exactamente una vez.
-	- Verificar broadcast `participants-updated` con `score` incrementado +20.
+  - Alumno envía respuesta con `evaluation.score = 20` y `points = 100`.
+  - Verificar que `AnswerService` upsertea evaluación con `awardedPoints ≈ 20` y llama `participantsRepo.incScore(classId, sessionId, 20)` exactamente una vez.
+  - Verificar broadcast `participants-updated` con `score` incrementado +20.
 
 - Caso server-eval:
-	- Alumno envía respuesta sin `evaluation`.
-	- Server llama `LLMEvaluator.evaluate`, calcula `awardedPoints` y llama `incScore` una vez.
+  - Alumno envía respuesta sin `evaluation`.
+  - Server llama `LLMEvaluator.evaluate`, calcula `awardedPoints` y llama `incScore` una vez.
 
 - Caso MCQ:
-	- Profesor revela con `correctAnswer`.
-	- Server asigna awards a `correctSessions` y no re-aplica awards para respuestas ya evaluadas.
+  - Profesor revela con `correctAnswer`.
+  - Server asigna awards a `correctSessions` y no re-aplica awards para respuestas ya evaluadas.

@@ -1,5 +1,10 @@
-import { useEffect, useRef } from 'react'
-import { initRealtime, subscribeToClass, unsubscribeFromClass, getSessionId } from '../lib/storage'
+import { useEffect, useRef } from "react";
+import {
+  initRealtime,
+  subscribeToClass,
+  unsubscribeFromClass,
+  getSessionId,
+} from "../lib/storage";
 
 /**
  * useRealtime
@@ -28,38 +33,58 @@ export default function useRealtime(classCode, onEvent, opts = {}) {
   // Support two signatures:
   // - useRealtime(classCode, handlerFn, opts)  -> handlerFn(detail)
   // - useRealtime(classCode, callbacksObj)    -> callbacksObj.{onParticipantsUpdated,...}
-  const handlerRef = useRef()
-  if (typeof onEvent === 'function') {
-    handlerRef.current = onEvent
-  } else if (onEvent && typeof onEvent === 'object') {
+  const handlerRef = useRef();
+  if (typeof onEvent === "function") {
+    handlerRef.current = onEvent;
+  } else if (onEvent && typeof onEvent === "object") {
     handlerRef.current = (d) => {
       try {
-        if (!d) return
-        if (d.type === 'participants-updated' && onEvent.onParticipantsUpdated) return onEvent.onParticipantsUpdated(d.participants || [])
-        if (d.type === 'question-launched' && onEvent.onQuestionLaunched) return onEvent.onQuestionLaunched(d.question)
-        if (d.type === 'answers-count' && onEvent.onAnswersCount) return onEvent.onAnswersCount(d)
-        if (d.type === 'question-results' && onEvent.onQuestionResults) return onEvent.onQuestionResults(d)
-        if ((d.type === 'participant-heartbeat' || d.type === 'participant-disconnected') && onEvent.onParticipantHeartbeat) return onEvent.onParticipantHeartbeat(d)
-      } catch (err) { /* swallow callback errors */ }
-    }
+        if (!d) return;
+        if (d.type === "participants-updated" && onEvent.onParticipantsUpdated)
+          return onEvent.onParticipantsUpdated(d.participants || []);
+        if (d.type === "question-launched" && onEvent.onQuestionLaunched)
+          return onEvent.onQuestionLaunched(d.question);
+        if (d.type === "answers-count" && onEvent.onAnswersCount)
+          return onEvent.onAnswersCount(d);
+        if (d.type === "question-results" && onEvent.onQuestionResults)
+          return onEvent.onQuestionResults(d);
+        if (
+          (d.type === "participant-heartbeat" ||
+            d.type === "participant-disconnected") &&
+          onEvent.onParticipantHeartbeat
+        )
+          return onEvent.onParticipantHeartbeat(d);
+      } catch (err) {
+        /* swallow callback errors */
+      }
+    };
   } else {
-    handlerRef.current = () => {}
+    handlerRef.current = () => {};
   }
 
   useEffect(() => {
-    if (!classCode) return
+    if (!classCode) return;
     // Initialize the realtime subsystem (may be idempotent)
-    try { initRealtime() } catch (e) { /* ignore init errors here */ }
+    try {
+      initRealtime();
+    } catch (e) {
+      /* ignore init errors here */
+    }
 
     // Subscribe to the class using storage helpers only when the caller is
     // a function (student flow) or explicitly requested subscription via
     // opts.forceSubscribe=true. This prevents accidental student-subscribe
     // side effects when the caller wanted only callback-object handling.
     try {
-      const shouldAutoSubscribe = (typeof onEvent === 'function') || opts.forceSubscribe === true
+      const shouldAutoSubscribe =
+        typeof onEvent === "function" || opts.forceSubscribe === true;
       if (shouldAutoSubscribe) {
-        const displayName = opts.displayName || `Alumno-${(getSessionId() || '').slice(0,5)}`
-        subscribeToClass(classCode, { displayName, role: opts.role || 'student' })
+        const displayName =
+          opts.displayName || `Alumno-${(getSessionId() || "").slice(0, 5)}`;
+        subscribeToClass(classCode, {
+          displayName,
+          role: opts.role || "student",
+        });
       }
     } catch (e) {
       // swallow subscription errors
@@ -67,21 +92,31 @@ export default function useRealtime(classCode, onEvent, opts = {}) {
 
     // Window-level event listener receives CustomEvent with `detail`
     function handleRealtime(e) {
-      const detail = e && e.detail ? e.detail : null
-      if (!detail) return
-      if (detail.classId && detail.classId !== classCode) return
+      const detail = e && e.detail ? e.detail : null;
+      if (!detail) return;
+      if (detail.classId && detail.classId !== classCode) return;
       try {
         // Delegate to the latest onEvent via handlerRef
-        if (handlerRef.current) handlerRef.current(detail)
-      } catch (err) { /* handler errors are caller responsibility */ }
+        if (handlerRef.current) handlerRef.current(detail);
+      } catch (err) {
+        /* handler errors are caller responsibility */
+      }
     }
 
-    window.addEventListener('aula-realtime', handleRealtime)
+    window.addEventListener("aula-realtime", handleRealtime);
 
     return () => {
-      try { window.removeEventListener('aula-realtime', handleRealtime) } catch (e) { /* ignore */ }
-      try { unsubscribeFromClass(classCode) } catch (e) { /* ignore */ }
-    }
-  // Only re-run when classCode or subscription identity changes.
-  }, [classCode, opts.displayName, opts.role])
+      try {
+        window.removeEventListener("aula-realtime", handleRealtime);
+      } catch (e) {
+        /* ignore */
+      }
+      try {
+        unsubscribeFromClass(classCode);
+      } catch (e) {
+        /* ignore */
+      }
+    };
+    // Only re-run when classCode or subscription identity changes.
+  }, [classCode, opts.displayName, opts.role]);
 }

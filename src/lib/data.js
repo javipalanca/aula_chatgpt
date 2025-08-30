@@ -1,36 +1,231 @@
 export const ETHICS_SCENARIOS = [
   // type: 'single' | 'multiple' | 'prompt' | 'conversation'
-  { text: "Pedirle a ChatGPT que haga tu examen de mañana y te pase las respuestas.", good: false, why: "Copiar en exámenes es deshonesto y suele violar normas académicas. Mejor úsalo para repasar o generar ejercicios de práctica.", type: 'single', maxPoints: 100, timeDecay: true, duration: 30 },
-  { text: "Pedir ejemplos de cómo citar correctamente fuentes en un trabajo.", good: true, why: "Promueve el aprendizaje y el respeto por la propiedad intelectual.", type: 'single', maxPoints: 100, timeDecay: true, duration: 30 },
-  { text: "Solicitar un texto con datos personales de un compañero/a para publicarlo.", good: false, why: "La privacidad es clave: nunca pidas ni compartas datos personales sin permiso.", type: 'single', maxPoints: 100, timeDecay: true, duration: 30 },
-  { text: "Pedir una explicación paso a paso de un tema (con analogías) para entenderlo mejor.", good: true, why: "Excelente uso: comprensión, ejemplos, analogías y diferentes enfoques didácticos.", type: 'single', maxPoints: 100, timeDecay: true, duration: 30 },
-  { text: "Pedir que escriba tu comentario de clase haciéndose pasar por ti sin decírselo al profe.", good: false, why: "Engañar sobre la autoría no es ético. Puedes pedir ayuda para estructurar ideas, pero escribe tú.", type: 'single', maxPoints: 100, timeDecay: true, duration: 30 },
-  { text: "Solicitar ideas para un proyecto creativo (guion de vídeo, experimento, cómic).", good: true, why: "La IA como lluvia de ideas y co-creación es un buen uso si luego lo adaptas y citas si procede.", type: 'single', maxPoints: 100, timeDecay: true, duration: 30 },
-  { text: "Intentar vulnerar contraseñas o saltarte medidas de seguridad usando la IA.", good: false, why: "Prohibido y peligroso. El uso responsable evita actividades dañinas o ilegales.", type: 'single', maxPoints: 100, timeDecay: true, duration: 30 },
-  { text: "Pedir una rúbrica para autoevaluar tu trabajo antes de entregarlo.", good: true, why: "Fomenta la autonomía y la mejora progresiva del propio trabajo.", type: 'single', maxPoints: 100, timeDecay: true, duration: 30 },
-  { text: "Subir la foto de un amigo sin su permiso para pedir descripciones detalladas.", good: false, why: "Respeta la privacidad e imagen de los demás. Pide consentimiento siempre.", type: 'single', maxPoints: 100, timeDecay: true, duration: 30 },
-  { text: "Pedir un resumen de un texto que ya has leído para comprobar si lo has entendido.", good: true, why: "Buen uso: comprobación, repaso y aprendizaje activo.", type: 'single', maxPoints: 100, timeDecay: true, duration: 30 },
+  {
+    text: "Pedirle a ChatGPT que haga tu examen de mañana y te pase las respuestas.",
+    good: false,
+    why: "Copiar en exámenes es deshonesto y suele violar normas académicas. Mejor úsalo para repasar o generar ejercicios de práctica.",
+    type: "single",
+    maxPoints: 100,
+    timeDecay: true,
+    duration: 30,
+  },
+  {
+    text: "Pedir ejemplos de cómo citar correctamente fuentes en un trabajo.",
+    good: true,
+    why: "Promueve el aprendizaje y el respeto por la propiedad intelectual.",
+    type: "single",
+    maxPoints: 100,
+    timeDecay: true,
+    duration: 30,
+  },
+  {
+    text: "Solicitar un texto con datos personales de un compañero/a para publicarlo.",
+    good: false,
+    why: "La privacidad es clave: nunca pidas ni compartas datos personales sin permiso.",
+    type: "single",
+    maxPoints: 100,
+    timeDecay: true,
+    duration: 30,
+  },
+  {
+    text: "Pedir una explicación paso a paso de un tema (con analogías) para entenderlo mejor.",
+    good: true,
+    why: "Excelente uso: comprensión, ejemplos, analogías y diferentes enfoques didácticos.",
+    type: "single",
+    maxPoints: 100,
+    timeDecay: true,
+    duration: 30,
+  },
+  {
+    text: "Pedir que escriba tu comentario de clase haciéndose pasar por ti sin decírselo al profe.",
+    good: false,
+    why: "Engañar sobre la autoría no es ético. Puedes pedir ayuda para estructurar ideas, pero escribe tú.",
+    type: "single",
+    maxPoints: 100,
+    timeDecay: true,
+    duration: 30,
+  },
+  {
+    text: "Solicitar ideas para un proyecto creativo (guion de vídeo, experimento, cómic).",
+    good: true,
+    why: "La IA como lluvia de ideas y co-creación es un buen uso si luego lo adaptas y citas si procede.",
+    type: "single",
+    maxPoints: 100,
+    timeDecay: true,
+    duration: 30,
+  },
+  {
+    text: "Intentar vulnerar contraseñas o saltarte medidas de seguridad usando la IA.",
+    good: false,
+    why: "Prohibido y peligroso. El uso responsable evita actividades dañinas o ilegales.",
+    type: "single",
+    maxPoints: 100,
+    timeDecay: true,
+    duration: 30,
+  },
+  {
+    text: "Pedir una rúbrica para autoevaluar tu trabajo antes de entregarlo.",
+    good: true,
+    why: "Fomenta la autonomía y la mejora progresiva del propio trabajo.",
+    type: "single",
+    maxPoints: 100,
+    timeDecay: true,
+    duration: 30,
+  },
+  {
+    text: "Subir la foto de un amigo sin su permiso para pedir descripciones detalladas.",
+    good: false,
+    why: "Respeta la privacidad e imagen de los demás. Pide consentimiento siempre.",
+    type: "single",
+    maxPoints: 100,
+    timeDecay: true,
+    duration: 30,
+  },
+  {
+    text: "Pedir un resumen de un texto que ya has leído para comprobar si lo has entendido.",
+    good: true,
+    why: "Buen uso: comprobación, repaso y aprendizaje activo.",
+    type: "single",
+    maxPoints: 100,
+    timeDecay: true,
+    duration: 30,
+  },
 ];
 
 export const VERIF_QUIZ = [
-  { q: "Si ChatGPT te da un dato estadístico (por ejemplo, población de una ciudad), ¿qué haces?", options: ["Lo copio tal cual, seguro que está bien.", "Lo cito como 'según una IA' y ya está.", "Busco al menos 2 fuentes fiables (web oficial, medios de calidad) para verificarlo."], a: 2, explain: "Los datos pueden estar desactualizados o ser incorrectos: contrasta con fuentes fiables.", type: 'single', maxPoints: 100, timeDecay: true, duration: 30 },
-  { q: "¿Cuál es una buena manera de pedir referencias?", options: ["\"Dame fuentes reales y enlazables\" y luego comprobarlas.", "No hace falta fuentes si suena convincente.", "Pedir que invente bibliografía si no existe."], a: 0, explain: "Solicita fuentes concretas y compruébalas; desconfía de bibliografías inventadas.", type: 'single', maxPoints: 100, timeDecay: true, duration: 30 },
-  { q: "Si sospechas que hay un error en la respuesta, ¿qué haces?", options: ["Ignoro la sospecha: seguro que no es importante.", "Pregunto de nuevo, pido que razone paso a paso o reformulo la pregunta.", "Me enfado con la IA."], a: 1, explain: "Reformular, pedir pasos o contrastar suele mejorar la calidad y detectar fallos.", type: 'single', maxPoints: 100, timeDecay: true, duration: 30 },
-  { q: "¿Qué no deberías compartir cuando pides ayuda?", options: ["Datos personales sensibles o identificadores.", "El enunciado de un ejercicio.", "Tus dudas concretas."], a: 0, explain: "Evita datos sensibles (DNI, direcciones, contraseñas, salud, etc.).", type: 'single', maxPoints: 100, timeDecay: true, duration: 30 },
-  { q: "¿Cómo citar el uso de IA en un trabajo escolar?", options: ["No hace falta decir nada.", "Añadir una nota: 'He usado ChatGPT para ideas/esquema/borrador y yo revisé y reescribí'.", "Decir que todo es de la IA y yo no hice nada."], a: 1, explain: "La transparencia es clave: explica cómo la usaste y qué parte es tuya.", type: 'single', maxPoints: 100, timeDecay: true, duration: 30 },
+  {
+    q: "Si ChatGPT te da un dato estadístico (por ejemplo, población de una ciudad), ¿qué haces?",
+    options: [
+      "Lo copio tal cual, seguro que está bien.",
+      "Lo cito como 'según una IA' y ya está.",
+      "Busco al menos 2 fuentes fiables (web oficial, medios de calidad) para verificarlo.",
+    ],
+    a: 2,
+    explain:
+      "Los datos pueden estar desactualizados o ser incorrectos: contrasta con fuentes fiables.",
+    type: "single",
+    maxPoints: 100,
+    timeDecay: true,
+    duration: 30,
+  },
+  {
+    q: "¿Cuál es una buena manera de pedir referencias?",
+    options: [
+      '"Dame fuentes reales y enlazables" y luego comprobarlas.',
+      "No hace falta fuentes si suena convincente.",
+      "Pedir que invente bibliografía si no existe.",
+    ],
+    a: 0,
+    explain:
+      "Solicita fuentes concretas y compruébalas; desconfía de bibliografías inventadas.",
+    type: "single",
+    maxPoints: 100,
+    timeDecay: true,
+    duration: 30,
+  },
+  {
+    q: "Si sospechas que hay un error en la respuesta, ¿qué haces?",
+    options: [
+      "Ignoro la sospecha: seguro que no es importante.",
+      "Pregunto de nuevo, pido que razone paso a paso o reformulo la pregunta.",
+      "Me enfado con la IA.",
+    ],
+    a: 1,
+    explain:
+      "Reformular, pedir pasos o contrastar suele mejorar la calidad y detectar fallos.",
+    type: "single",
+    maxPoints: 100,
+    timeDecay: true,
+    duration: 30,
+  },
+  {
+    q: "¿Qué no deberías compartir cuando pides ayuda?",
+    options: [
+      "Datos personales sensibles o identificadores.",
+      "El enunciado de un ejercicio.",
+      "Tus dudas concretas.",
+    ],
+    a: 0,
+    explain:
+      "Evita datos sensibles (DNI, direcciones, contraseñas, salud, etc.).",
+    type: "single",
+    maxPoints: 100,
+    timeDecay: true,
+    duration: 30,
+  },
+  {
+    q: "¿Cómo citar el uso de IA en un trabajo escolar?",
+    options: [
+      "No hace falta decir nada.",
+      "Añadir una nota: 'He usado ChatGPT para ideas/esquema/borrador y yo revisé y reescribí'.",
+      "Decir que todo es de la IA y yo no hice nada.",
+    ],
+    a: 1,
+    explain:
+      "La transparencia es clave: explica cómo la usaste y qué parte es tuya.",
+    type: "single",
+    maxPoints: 100,
+    timeDecay: true,
+    duration: 30,
+  },
 ];
 
 export const BAD_PROMPTS = [
-  { id: 1, bad: "Explícame historia", tip: "Sé concreto: tema, curso/edad, extensión, formato (lista, esquema), ejemplos y tono.", type: 'prompt', maxPoints: 200, timeDecay: false, duration: 160, systemPrompt: 'Eres un evaluador cuyo objetivo es puntuar cuánto mejora la propuesta del alumno el prompt original. Recibirás dos entradas: el prompt original y la propuesta del alumno. No evalúes la respuesta que produciría el prompt; evalúa exclusivamente la calidad de la mejora respecto al prompt original (claridad, especificidad, restricciones, formato, ejemplos, instrucciones de tono). Devuelve una puntuación entre 0 y {{maxPoints}} y una breve justificación centrada en la mejora. Responde únicamente con JSON válido en formato: {"score": <número entre 0 y {{maxPoints}}>, "maxPoints": {{maxPoints}}, "justification": "texto breve"}. No incluyas texto adicional.' },
-  { id: 2, bad: "Haz mi comentario de texto de La casa de Bernarda Alba", tip: "Pide guía: estructura, preguntas para reflexionar, vocabulario, y escribe tu versión.", type: 'prompt', maxPoints: 200, timeDecay: false, duration: 160, systemPrompt: 'Eres un evaluador cuyo objetivo es puntuar cuánto mejora la propuesta del alumno el prompt original. Recibirás dos entradas: el prompt original y la propuesta del alumno. No evalúes la respuesta que produciría el prompt; evalúa exclusivamente la calidad de la mejora respecto al prompt original (claridad, enfoque, criterios literarios apropiados, petición de ejemplos y formato). Devuelve una puntuación entre 0 y {{maxPoints}} y una breve justificación centrada en la mejora. Responde únicamente con JSON válido en formato: {"score": <número entre 0 y {{maxPoints}}>, "maxPoints": {{maxPoints}}, "justification": "texto breve"}. No incluyas texto adicional.' },
-  { id: 3, bad: "Dame un trabajo de 10 páginas sobre la fotosíntesis", tip: "Divide: índice propuesto + resumen por apartados + fuentes para ampliar.", type: 'prompt', maxPoints: 200, timeDecay: false, duration: 160, systemPrompt: 'Eres un evaluador cuyo objetivo es puntuar cuánto mejora la propuesta del alumno el prompt original. Recibirás dos entradas: el prompt original y la propuesta del alumno. No evalúes la respuesta que produciría el prompt; evalúa exclusivamente la calidad de la mejora respecto al prompt original (cobertura, precisión de alcance, instrucciones de formato y demandas de fuentes). Devuelve una puntuación entre 0 y {{maxPoints}} y una breve justificación centrada en la mejora. Responde únicamente con JSON válido en formato: {"score": <número entre 0 y {{maxPoints}}>, "maxPoints": {{maxPoints}}, "justification": "texto breve"}. No incluyas texto adicional.' },
+  {
+    id: 1,
+    bad: "Explícame historia",
+    tip: "Sé concreto: tema, curso/edad, extensión, formato (lista, esquema), ejemplos y tono.",
+    type: "prompt",
+    maxPoints: 200,
+    timeDecay: false,
+    duration: 160,
+    systemPrompt:
+      'Eres un evaluador cuyo objetivo es puntuar cuánto mejora la propuesta del alumno el prompt original. Recibirás dos entradas: el prompt original y la propuesta del alumno. No evalúes la respuesta que produciría el prompt; evalúa exclusivamente la calidad de la mejora respecto al prompt original (claridad, especificidad, restricciones, formato, ejemplos, instrucciones de tono). Devuelve una puntuación entre 0 y {{maxPoints}} y una breve justificación centrada en la mejora. Responde únicamente con JSON válido en formato: {"score": <número entre 0 y {{maxPoints}}>, "maxPoints": {{maxPoints}}, "justification": "texto breve"}. No incluyas texto adicional.',
+  },
+  {
+    id: 2,
+    bad: "Haz mi comentario de texto de La casa de Bernarda Alba",
+    tip: "Pide guía: estructura, preguntas para reflexionar, vocabulario, y escribe tu versión.",
+    type: "prompt",
+    maxPoints: 200,
+    timeDecay: false,
+    duration: 160,
+    systemPrompt:
+      'Eres un evaluador cuyo objetivo es puntuar cuánto mejora la propuesta del alumno el prompt original. Recibirás dos entradas: el prompt original y la propuesta del alumno. No evalúes la respuesta que produciría el prompt; evalúa exclusivamente la calidad de la mejora respecto al prompt original (claridad, enfoque, criterios literarios apropiados, petición de ejemplos y formato). Devuelve una puntuación entre 0 y {{maxPoints}} y una breve justificación centrada en la mejora. Responde únicamente con JSON válido en formato: {"score": <número entre 0 y {{maxPoints}}>, "maxPoints": {{maxPoints}}, "justification": "texto breve"}. No incluyas texto adicional.',
+  },
+  {
+    id: 3,
+    bad: "Dame un trabajo de 10 páginas sobre la fotosíntesis",
+    tip: "Divide: índice propuesto + resumen por apartados + fuentes para ampliar.",
+    type: "prompt",
+    maxPoints: 200,
+    timeDecay: false,
+    duration: 160,
+    systemPrompt:
+      'Eres un evaluador cuyo objetivo es puntuar cuánto mejora la propuesta del alumno el prompt original. Recibirás dos entradas: el prompt original y la propuesta del alumno. No evalúes la respuesta que produciría el prompt; evalúa exclusivamente la calidad de la mejora respecto al prompt original (cobertura, precisión de alcance, instrucciones de formato y demandas de fuentes). Devuelve una puntuación entre 0 y {{maxPoints}} y una breve justificación centrada en la mejora. Responde únicamente con JSON válido en formato: {"score": <número entre 0 y {{maxPoints}}>, "maxPoints": {{maxPoints}}, "justification": "texto breve"}. No incluyas texto adicional.',
+  },
 ];
 
-export const RED_FLAGS_SAMPLE = [{
-  answer: "La Revolución de los Pingüinos empezó en 1789 en Francia, cuando los pingüinos derrocaron a Luis XVI. Según el Instituto Francés de Pingüinología, hubo 123 castillos de hielo tomados por asalto. Todo terminó con el Tratado de Hielo de 1795 firmado en la Antártida.",
-  checks: [ { id: 'hechos', label: 'Hay datos que requieren verificación externa' }, { id: 'inventado', label: 'Detecto elementos inventados o absurdos' }, { id: 'fuentes', label: 'Faltan fuentes reales o enlaces comprobables' }, { id: 'tono', label: 'El tono no es adecuado para un trabajo escolar' }, { id: 'privacidad', label: 'Incluye datos personales innecesarios' } ],
-  options: [ 'Hay datos que requieren verificación externa', 'Detecto elementos inventados o absurdos', 'Faltan fuentes reales o enlaces comprobables', 'El tono no es adecuado para un trabajo escolar', 'Incluye datos personales innecesarios' ],
-  correct: ['hechos','inventado','fuentes','tono'],
-  evaluation: 'redflags',
-  type: 'multiple'
-}];
+export const RED_FLAGS_SAMPLE = [
+  {
+    answer:
+      "La Revolución de los Pingüinos empezó en 1789 en Francia, cuando los pingüinos derrocaron a Luis XVI. Según el Instituto Francés de Pingüinología, hubo 123 castillos de hielo tomados por asalto. Todo terminó con el Tratado de Hielo de 1795 firmado en la Antártida.",
+    checks: [
+      { id: "hechos", label: "Hay datos que requieren verificación externa" },
+      { id: "inventado", label: "Detecto elementos inventados o absurdos" },
+      { id: "fuentes", label: "Faltan fuentes reales o enlaces comprobables" },
+      { id: "tono", label: "El tono no es adecuado para un trabajo escolar" },
+      { id: "privacidad", label: "Incluye datos personales innecesarios" },
+    ],
+    options: [
+      "Hay datos que requieren verificación externa",
+      "Detecto elementos inventados o absurdos",
+      "Faltan fuentes reales o enlaces comprobables",
+      "El tono no es adecuado para un trabajo escolar",
+      "Incluye datos personales innecesarios",
+    ],
+    correct: ["hechos", "inventado", "fuentes", "tono"],
+    evaluation: "redflags",
+    type: "multiple",
+  },
+];

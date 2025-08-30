@@ -1,5 +1,12 @@
-import { useEffect, useState, useCallback, useRef } from 'react'
-import { joinClass, startHeartbeat, stopHeartbeat, leaveClass, listClassParticipants, getSessionId } from '../lib/storage'
+import { useEffect, useState, useCallback, useRef } from "react";
+import {
+  joinClass,
+  startHeartbeat,
+  stopHeartbeat,
+  leaveClass,
+  listClassParticipants,
+  getSessionId,
+} from "../lib/storage";
 
 /**
  * useParticipants
@@ -21,39 +28,63 @@ import { joinClass, startHeartbeat, stopHeartbeat, leaveClass, listClassParticip
  */
 export default function useParticipants(classCode, displayName) {
   // Local participants cache
-  const [participants, setParticipants] = useState([])
+  const [participants, setParticipants] = useState([]);
   // Mounted flag to avoid state updates after unmount
-  const mountedRef = useRef(true)
+  const mountedRef = useRef(true);
 
   // fetchParticipants: list participants for the class and set state if mounted
   const fetchParticipants = useCallback(async () => {
-    if (!classCode) return
+    if (!classCode) return;
     try {
-      const parts = await listClassParticipants(classCode)
-      if (mountedRef.current) setParticipants(parts || [])
-    } catch (e) { /* ignore */ }
-  }, [classCode])
+      const parts = await listClassParticipants(classCode);
+      if (mountedRef.current) setParticipants(parts || []);
+    } catch (e) {
+      /* ignore */
+    }
+  }, [classCode]);
 
   // Effect: join the class and start heartbeat; fetch initial participants.
   // Cleanup stops heartbeat and leaves the class.
-  useEffect(()=>{
-    if (!classCode) return
-    mountedRef.current = true
-    ;(async () => {
+  useEffect(() => {
+    if (!classCode) return;
+    mountedRef.current = true;
+    (async () => {
       try {
-        await joinClass(classCode, displayName || `Alumno-${getSessionId().slice(0,5)}`)
-        try { startHeartbeat(classCode, 5000) } catch(e) { /* ignore */ }
+        await joinClass(
+          classCode,
+          displayName || `Alumno-${getSessionId().slice(0, 5)}`,
+        );
+        try {
+          startHeartbeat(classCode, 5000);
+        } catch (e) {
+          /* ignore */
+        }
         // fetch initial participants only if still mounted
-        if (mountedRef.current) await fetchParticipants()
-      } catch (e) { console.warn('useParticipants joinClass failed', e) }
-    })()
+        if (mountedRef.current) await fetchParticipants();
+      } catch (e) {
+        console.warn("useParticipants joinClass failed", e);
+      }
+    })();
 
     return () => {
-      mountedRef.current = false
-      try { stopHeartbeat() } catch(e) { /* ignore */ }
-      try { leaveClass(classCode) } catch(e) { /* ignore */ }
-    }
-  }, [classCode, displayName, fetchParticipants])
+      mountedRef.current = false;
+      try {
+        stopHeartbeat();
+      } catch (e) {
+        /* ignore */
+      }
+      try {
+        leaveClass(classCode);
+      } catch (e) {
+        /* ignore */
+      }
+    };
+  }, [classCode, displayName, fetchParticipants]);
 
-  return { participants, me: (participants || []).find(p => p.sessionId === getSessionId()) || null, refresh: fetchParticipants }
+  return {
+    participants,
+    me:
+      (participants || []).find((p) => p.sessionId === getSessionId()) || null,
+    refresh: fetchParticipants,
+  };
 }

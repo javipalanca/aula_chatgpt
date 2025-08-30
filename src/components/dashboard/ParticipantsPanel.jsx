@@ -1,6 +1,5 @@
-
-import React, { useState } from 'react';
-import { clsx } from '../ui';
+import React, { useState } from "react";
+import { clsx } from "../ui";
 
 export function ParticipantsPanel({ participants }) {
   const [showParticipantsList, setShowParticipantsList] = useState(true);
@@ -31,23 +30,28 @@ export function ParticipantsPanel({ participants }) {
       </div>
       <div className="mb-4">
         <div className="mt-3 space-y-2 max-h-72 overflow-auto">
-          {participants.slice().sort((a, b) => (b.score || 0) - (a.score || 0)).map((p) => (
-            <div
-              key={p.sessionId}
-              className={clsx(
-                'p-2 rounded border flex items-center justify-between',
-                p.connected === false ? 'bg-red-50 opacity-60' : 'bg-white/5'
-              )}
-            >
-              <div className="font-semibold">
-                {p.displayName}
-                {p.connected === false && (
-                  <span className="ml-2 text-xs text-red-600">(desconectado)</span>
+          {participants
+            .slice()
+            .sort((a, b) => (b.score || 0) - (a.score || 0))
+            .map((p) => (
+              <div
+                key={p.sessionId}
+                className={clsx(
+                  "p-2 rounded border flex items-center justify-between",
+                  p.connected === false ? "bg-red-50 opacity-60" : "bg-white/5",
                 )}
+              >
+                <div className="font-semibold">
+                  {p.displayName}
+                  {p.connected === false && (
+                    <span className="ml-2 text-xs text-red-600">
+                      (desconectado)
+                    </span>
+                  )}
+                </div>
+                <div className="font-bold">{p.score || 0}</div>
               </div>
-              <div className="font-bold">{p.score || 0}</div>
-            </div>
-          ))}
+            ))}
         </div>
       </div>
     </div>

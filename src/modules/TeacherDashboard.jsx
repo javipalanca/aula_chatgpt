@@ -1,4 +1,3 @@
-
 /*
   TeacherDashboard.jsx
 
@@ -11,23 +10,30 @@
   componentes hijos más pequeños y especializados que se encuentran en
   `src/components/dashboard`.
 */
-import React from 'react'
-import { FancyCard } from '../components/ui'
-import { Chart as ChartJS, BarElement, CategoryScale, LinearScale, Tooltip, Legend } from 'chart.js'
-import { ClassSelector } from '../components/dashboard/ClassSelector'
-import { DashboardHeader } from '../components/dashboard/DashboardHeader'
-import { Timeline } from '../components/dashboard/Timeline'
-import { QuestionControl } from '../components/dashboard/QuestionControl'
-import { ParticipantsPanel } from '../components/dashboard/ParticipantsPanel'
-import { CodeModal } from '../components/dashboard/modals/CodeModal'
-import { ScoresOverlay } from '../components/dashboard/modals/ScoresOverlay'
-import { FinalWinnersModal } from '../components/dashboard/modals/FinalWinnersModal'
-import useTeacherDashboard from '../hooks/useTeacherDashboard'
+import React from "react";
+import { FancyCard } from "../components/ui";
+import {
+  Chart as ChartJS,
+  BarElement,
+  CategoryScale,
+  LinearScale,
+  Tooltip,
+  Legend,
+} from "chart.js";
+import { ClassSelector } from "../components/dashboard/ClassSelector";
+import { DashboardHeader } from "../components/dashboard/DashboardHeader";
+import { Timeline } from "../components/dashboard/Timeline";
+import { QuestionControl } from "../components/dashboard/QuestionControl";
+import { ParticipantsPanel } from "../components/dashboard/ParticipantsPanel";
+import { CodeModal } from "../components/dashboard/modals/CodeModal";
+import { ScoresOverlay } from "../components/dashboard/modals/ScoresOverlay";
+import { FinalWinnersModal } from "../components/dashboard/modals/FinalWinnersModal";
+import useTeacherDashboard from "../hooks/useTeacherDashboard";
 
-ChartJS.register(BarElement, CategoryScale, LinearScale, Tooltip, Legend)
+ChartJS.register(BarElement, CategoryScale, LinearScale, Tooltip, Legend);
 
 export default function TeacherDashboard() {
-  const state = useTeacherDashboard()
+  const state = useTeacherDashboard();
 
   const {
     classes,
@@ -53,7 +59,7 @@ export default function TeacherDashboard() {
     answeredQuestionIds,
     activeClassData,
 
-  // actions
+    // actions
     handleRevealAction,
     handleCreateClass,
     handleDeleteClass,
@@ -65,8 +71,7 @@ export default function TeacherDashboard() {
     handleLaunch,
     jumpToQuestion,
     setShowFinalModal,
-  } = state
-  
+  } = state;
 
   if (!activeClass || !activeClassData) {
     return (
@@ -83,8 +88,7 @@ export default function TeacherDashboard() {
 
   return (
     <div className="p-4">
-      
-      <DashboardHeader 
+      <DashboardHeader
         classData={activeClassData}
         questionRunning={questionRunning}
         onToggleActive={() => handleToggleActiveClass(activeClass)}
@@ -97,15 +101,15 @@ export default function TeacherDashboard() {
       <FancyCard className="p-6 mt-4">
         <div className="flex flex-col md:flex-row md:items-start md:gap-6">
           <div className="flex-1">
-            <Timeline 
-                classData={activeClassData}
-                blockViewIndex={blockViewIndex}
-                setBlockViewIndex={setBlockViewIndex}
-                questionRunning={questionRunning}
-                onJumpToQuestion={jumpToQuestion}
-                answeredQuestionIds={answeredQuestionIds}
-              />
-            <QuestionControl 
+            <Timeline
+              classData={activeClassData}
+              blockViewIndex={blockViewIndex}
+              setBlockViewIndex={setBlockViewIndex}
+              questionRunning={questionRunning}
+              onJumpToQuestion={jumpToQuestion}
+              answeredQuestionIds={answeredQuestionIds}
+            />
+            <QuestionControl
               questionRunning={questionRunning}
               secondsLeft={secondsLeft}
               liveAnswers={liveAnswers}
@@ -124,17 +128,17 @@ export default function TeacherDashboard() {
         </div>
       </FancyCard>
 
-      <CodeModal 
+      <CodeModal
         show={showCodeModal}
         onClose={() => setShowCodeModal(false)}
         code={codeToShow}
       />
-      <ScoresOverlay 
+      <ScoresOverlay
         show={showScoresOverlay}
         onClose={() => setShowScoresOverlay(false)}
         participants={participants}
       />
-      <FinalWinnersModal 
+      <FinalWinnersModal
         show={showFinalModal}
         onClose={() => setShowFinalModal(false)}
         winners={finalWinners}

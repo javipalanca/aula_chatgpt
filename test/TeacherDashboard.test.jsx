@@ -1,24 +1,24 @@
-import React from 'react'
-import { render, screen } from '@testing-library/react'
+import React from "react";
+import { render, screen } from "@testing-library/react";
 // userEvent intentionally omitted in this test
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import TeacherDashboard from '../src/modules/TeacherDashboard'
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import TeacherDashboard from "../src/modules/TeacherDashboard";
 
-vi.mock('../src/lib/storage', async () => ({
-  createClass: vi.fn().mockResolvedValue({ id: 'MOCK' }),
+vi.mock("../src/lib/storage", async () => ({
+  createClass: vi.fn().mockResolvedValue({ id: "MOCK" }),
   listClasses: vi.fn().mockReturnValue([]),
   syncClassesRemote: vi.fn().mockResolvedValue([]),
-  getApiBase: () => ''
-}))
+  getApiBase: () => "",
+}));
 
-describe('TeacherDashboard', () => {
+describe("TeacherDashboard", () => {
   beforeEach(() => {
-    vi.clearAllMocks()
-  })
+    vi.clearAllMocks();
+  });
 
-  it('disables create button during creation', async () => {
-    render(<TeacherDashboard onClose={() => {}} />)
-    const btn = screen.getByRole('button', { name: /Crear clase/i })
-    expect(btn).toBeEnabled()
-  })
-})
+  it("disables create button during creation", async () => {
+    render(<TeacherDashboard onClose={() => {}} />);
+    const btn = screen.getByRole("button", { name: /Crear clase/i });
+    expect(btn).toBeEnabled();
+  });
+});

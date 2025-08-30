@@ -1,24 +1,23 @@
-
 # PLAN_REFACTOR.md
 
-Propósito
---------
+## Propósito
+
 Documento vivo que describe, paso a paso y con máximo detalle, el plan para refactorizar el proyecto "aula_chatgpt" hacia una arquitectura orientada a objetos / servicios.
 
-Objetivo
---------
+## Objetivo
+
 - Mejorar la encapsulación, legibilidad y testabilidad del código (especialmente `server/index.js` y la lógica del dashboard).
 - Mantener compatibilidad API HTTP/WS durante la migración.
 - Producir PRs pequeños, cada uno con tests y smoke checks.
 
-Cómo usar este documento
------------------------
+## Cómo usar este documento
+
 - Cada tarea tiene una casilla de verificación para marcar progreso.
 - Añade comentarios con: fecha, autor y una línea sobre lo que se hizo cuando marques una casilla.
 - Al terminar una fase, ejecutar los quality gates indicados y registrar resultados.
 
-Checklist global (estado)
--------------------------
+## Checklist global (estado)
+
 - [x] Fase 0 — Preparación (app.js, .env.example)
 - [x] Fase 1 — Extraer `LLMEvaluator` (servicio + tests)
 - [x] Fase 2 — Extraer DB / Repositories (implementado)
@@ -31,39 +30,39 @@ Checklist global (estado)
 - [x] Fase 3 — Implementar `WSManager` (implementado y conectado en `server/index.js`)
 - [x] Checkpoint — lint/tests/smoke (lint: PASS; unit tests: añadidos; ejecutar suite localmente para validación final)
 - [~] Fase 4 — Mover rutas a controllers (HTTP) (pendiente)
- - [x] Fase 4 — Mover rutas a controllers (HTTP) (implementado)
-  - Comentario: controllers principales creados e integrados (`participants`, `answers`, `questions`, `classes`, `challenges`, `progress`, `settings`, `llm`, `diagnosis`). Montaje por composición en `server/index.js` con `app.use`.
+- [x] Fase 4 — Mover rutas a controllers (HTTP) (implementado)
+- Comentario: controllers principales creados e integrados (`participants`, `answers`, `questions`, `classes`, `challenges`, `progress`, `settings`, `llm`, `diagnosis`). Montaje por composición en `server/index.js` con `app.use`.
 - [~] Fase 5 — `QuestionService` (scoring/reveal) (servicio creado; handler/reveal migration partially pending)
- - [~] Fase 5 — `QuestionService` (scoring/reveal) (servicio creado; handler/reveal HTTP delegation pending)
+- [~] Fase 5 — `QuestionService` (scoring/reveal) (servicio creado; handler/reveal HTTP delegation pending)
 - [ ] Fase 6 — Frontend: extraer lógica TeacherDashboard a hook/service
 - [ ] Fase 7 — Cleanup, docs y cierre
   - Comentario: `AnswersRepo` implementado y `server/index.js` actualizado para usarlo en todas las operaciones relacionadas con la base de datos de respuestas (upsert, find, findByClassQuestion). Tests añadidos: `test/answers.repo.test.js` (mock-based).
   - Comentario adicional:
-   - __2025-08-28__: `ClassesRepo` implementado (`server/repositories/ClassesRepo.js`) y tests unitarios añadidos (`test/classes.repo.test.js`). `server/index.js` actualizado para usar `ClassesRepo` en endpoints de clases y en `debug/dbstats`.
+  - **2025-08-28**: `ClassesRepo` implementado (`server/repositories/ClassesRepo.js`) y tests unitarios añadidos (`test/classes.repo.test.js`). `server/index.js` actualizado para usar `ClassesRepo` en endpoints de clases y en `debug/dbstats`.
   - Comentario adicional 2:
-   - __2025-08-28__: `ChallengesRepo` implementado (`server/repositories/ChallengesRepo.js`) y tests unitarios añadidos (`test/challenges.repo.test.js`). `server/index.js` actualizado para usar `ChallengesRepo` en endpoints de challenges y en limpieza por clase.
+  - **2025-08-28**: `ChallengesRepo` implementado (`server/repositories/ChallengesRepo.js`) y tests unitarios añadidos (`test/challenges.repo.test.js`). `server/index.js` actualizado para usar `ChallengesRepo` en endpoints de challenges y en limpieza por clase.
   - Comentario adicional 3:
-    - __2025-08-28__: `ProgressRepo` implementado (`server/repositories/ProgressRepo.js`) y tests unitarios añadidos (`test/progress.repo.test.js`). `server/index.js` actualizado para usar `ProgressRepo` en endpoints de progreso.
-    - __2025-08-28__: `DiagnosisRepo` implementado (`server/repositories/DiagnosisRepo.js`) y tests unitarios añadidos (`test/diagnosis.repo.test.js`). `server/index.js` actualizado para usar `DiagnosisRepo` en endpoints de diagnóstico.
-    - __2025-08-28__: `SettingsRepo` implementado (`server/repositories/SettingsRepo.js`) y tests unitarios añadidos (`test/settings.repo.test.js`). `server/index.js` actualizado para use `SettingsRepo` in settings endpoints.
+    - **2025-08-28**: `ProgressRepo` implementado (`server/repositories/ProgressRepo.js`) y tests unitarios añadidos (`test/progress.repo.test.js`). `server/index.js` actualizado para usar `ProgressRepo` en endpoints de progreso.
+    - **2025-08-28**: `DiagnosisRepo` implementado (`server/repositories/DiagnosisRepo.js`) y tests unitarios añadidos (`test/diagnosis.repo.test.js`). `server/index.js` actualizado para usar `DiagnosisRepo` en endpoints de diagnóstico.
+    - **2025-08-28**: `SettingsRepo` implementado (`server/repositories/SettingsRepo.js`) y tests unitarios añadidos (`test/settings.repo.test.js`). `server/index.js` actualizado para use `SettingsRepo` in settings endpoints.
 
   - Comentario adicional 6:
-    - __2025-08-28__: Servicios de dominio añadidos: `ParticipantService`, `AnswerService`, `QuestionService`, `DiagnosisService`, `SettingsService` (ubicados en `server/services/`). Se añadieron tests unitarios para `ParticipantService` y `AnswerService` y nuevos tests para `QuestionService`, `DiagnosisService` y `SettingsService` (`test/*.service.test.js`).
-    - __2025-08-28__: Ajustes en `server/index.js`: creación de repos en el composition root y desplazamiento de la instanciación de servicios para usar las funciones `broadcast`, `participantLastPersist` y `participantLastBroadcast` ya declaradas.
-    - __2025-08-28__: `AnswerService` evaluador/awarding logic corrected to support nested `activeQuestion.question.payload` and server-side evaluation fallback; tests updated/added accordingly.
-  - __2025-08-28__: `WSManager` implementado: `server/services/WSManager.js` creado y `server/index.js` actualizado para usar `wsManager.attach(server)`. Se añadieron tests en `test/wsmanager.test.js` que cubren subscribe/ping/answer/reveal flows y se añadieron tests adicionales para edge cases (mensajes malformados y reveal no autorizado).
-  - __2025-08-28__: `BroadcastService` implementado (`server/services/BroadcastService.js`). `WSManager` actualizado para delegar la contabilidad de sockets (registro, subscripciones, publish) a `BroadcastService`. `server/index.js` actualizado para instanciar `BroadcastService` y pasar un wrapper `broadcast` a los servicios y controladores.
-  - __2025-08-28__: Tests unitarios añadidos: `test/services/BroadcastService.test.js`. `test/wsmanager.test.js` actualizado para inyectar un mock de `broadcastService` (refactor de tests para reflejar cambio de responsabilidad).
+    - **2025-08-28**: Servicios de dominio añadidos: `ParticipantService`, `AnswerService`, `QuestionService`, `DiagnosisService`, `SettingsService` (ubicados en `server/services/`). Se añadieron tests unitarios para `ParticipantService` y `AnswerService` y nuevos tests para `QuestionService`, `DiagnosisService` y `SettingsService` (`test/*.service.test.js`).
+    - **2025-08-28**: Ajustes en `server/index.js`: creación de repos en el composition root y desplazamiento de la instanciación de servicios para usar las funciones `broadcast`, `participantLastPersist` y `participantLastBroadcast` ya declaradas.
+    - **2025-08-28**: `AnswerService` evaluador/awarding logic corrected to support nested `activeQuestion.question.payload` and server-side evaluation fallback; tests updated/added accordingly.
+  - **2025-08-28**: `WSManager` implementado: `server/services/WSManager.js` creado y `server/index.js` actualizado para usar `wsManager.attach(server)`. Se añadieron tests en `test/wsmanager.test.js` que cubren subscribe/ping/answer/reveal flows y se añadieron tests adicionales para edge cases (mensajes malformados y reveal no autorizado).
+  - **2025-08-28**: `BroadcastService` implementado (`server/services/BroadcastService.js`). `WSManager` actualizado para delegar la contabilidad de sockets (registro, subscripciones, publish) a `BroadcastService`. `server/index.js` actualizado para instanciar `BroadcastService` y pasar un wrapper `broadcast` a los servicios y controladores.
+  - **2025-08-28**: Tests unitarios añadidos: `test/services/BroadcastService.test.js`. `test/wsmanager.test.js` actualizado para inyectar un mock de `broadcastService` (refactor de tests para reflejar cambio de responsabilidad).
 
-Requisitos y supuestos
-----------------------
+## Requisitos y supuestos
+
 - Repositorio usa ESM (package.json: "type": "module").
 - Mantener JavaScript; migración a TypeScript queda como tarea futura.
 - Tests: Vitest está configurado (`npm test`).
 - Los pasos se realizarán en ramas `refactor/*` y PRs por fase.
 
-Comandos útiles (local)
-----------------------
+## Comandos útiles (local)
+
 Usar estos comandos para comprobar estado y ejecutar pruebas.
 
 ```bash
@@ -73,11 +72,12 @@ npm test
 npm run start-server
 ```
 
-Arquitectura objetivo (carpetas y responsabilidades)
--------------------------------------------------
+## Arquitectura objetivo (carpetas y responsabilidades)
+
 server/
+
 - lib/
-  - db.js                # Conexión a Mongo; getDb(); singleton
+  - db.js # Conexión a Mongo; getDb(); singleton
 - repositories/
   - ParticipantsRepo.js
   - ClassesRepo.js
@@ -85,9 +85,9 @@ server/
   - ChallengesRepo.js
   - DiagnosisRepo.js
 - services/
-  - LLMEvaluator.js      # Clase que encapsula OpenAI/Ollama y parsing
-  - WSManager.js         # WebSocket manager: subs, publish, throttling
-  - QuestionService.js   # Lógica de scoring y reveal (pura lógica)
+  - LLMEvaluator.js # Clase que encapsula OpenAI/Ollama y parsing
+  - WSManager.js # WebSocket manager: subs, publish, throttling
+  - QuestionService.js # Lógica de scoring y reveal (pura lógica)
   - ParticipantService.js# Lógica de participantes (debounce, persist)
 - controllers/
   - classes.js
@@ -96,40 +96,45 @@ server/
   - answers.js
   - diagnosis.js
   - llm.js
-- app.js                 # Monta express + routers (exporta app para tests)
-- index.js               # Entrypoint: lee config, arranca server y WSManager
+- app.js # Monta express + routers (exporta app para tests)
+- index.js # Entrypoint: lee config, arranca server y WSManager
 
-Contratos / Interfaces (mínimos)
---------------------------------
+## Contratos / Interfaces (mínimos)
+
 LLMEvaluator (clase)
+
 - constructor({ openaiKey, openaiUrl, openaiModel, ollamaUrl, ollamaModel })
 - async evaluate(questionPayload, answerText) => { score: number (0..1), feedback: string }
 - comportamiento: intentar OpenAI si `openaiKey`; fallback a Ollama; normalizar score 0..1; manejar parsing inseguro.
 
 ParticipantsRepo
+
 - async upsert(doc)
 - async incScore(classId, sessionId, amount)
 - async listConnected(classId, { includeDisconnected = false })
 - async markDisconnected(classId, sessionId)
 
 AnswersRepo
+
 - async replaceAnswer(doc)
 - async findByClassQuestion(classId, questionId)
 
 WSManager
+
 - constructor({ server, repos, services, options })
 - attachToServer(httpServer)
 - subscribe(ws, { classId, sessionId, role, displayName })
 - publish(type, payload, classId?)
 
 QuestionService
+
 - async computeDistribution(classId, questionId)
 - async reveal({ classId, questionId, correctAnswer, points })
 
-Fases detalladas y checklist por fase
-------------------------------------
+## Fases detalladas y checklist por fase
 
 Fase 0 — Preparación (low risk)
+
 - Objetivo: crear infra básica que permita tests y cambios incrementales.
 - Tareas:
 - [x] Crear `server/app.js` que exporte Express app (sin listen).
@@ -138,6 +143,7 @@ Fase 0 — Preparación (low risk)
 - [x] Ejecutar `npm run lint` y `npm test` para confirmar línea base.
 
 Fase 1 — Extraer LLMEvaluator (quick win)
+
 - Prioridad: alta. Reduce complejidad del monolito y facilita pruebas.
 - Resultado esperado: `server/services/LLMEvaluator.js` clase probada.
 - Tareas:
@@ -149,11 +155,13 @@ Fase 1 — Extraer LLMEvaluator (quick win)
   - [x] Ejecutar tests y corregir fallos. (tests añadidos; ejecución local realizada — salida del runner puede variar según entorno de Vitest)
 
 Notas de la Fase 1:
+
 - Se agregó `server/services/LLMEvaluator.js`.
 - Se añadió `test/llm.evaluator.test.js` que mockea `fetch` para cubrir los casos principales.
 - Por petición del propietario, la suite de tests no es obligatoria como paso bloqueante; sin embargo los tests están disponibles en `test/`.
 
 Fase 2 — Extraer DB / Repositorios
+
 - Objetivo: encapsular acceso a Mongo y centralizar la lógica de persistencia en clases (repos) probadas.
 - Estado general: en gran medida completado. Repos principales implementados e integrados en `server/index.js`. Tests unitarios añadidos y ejecutados localmente.
 - Tareas y estado:
@@ -176,46 +184,51 @@ Fase 2 — Extraer DB / Repositorios
   - [ ] Revisar y consolidar contratos públicos de los repos (docstrings / README-ARCHITECTURE) para que futuros servicios los consuman sin ambigüedad.
 
 Notas:
+
 - Los tests unitarios usan fakes que simulan la API básica del driver de Mongo (por ejemplo `find()` devolviendo un objeto con `toArray()`), esto evitó fricciones durante el refactor.
 - Con los repos implementados es más sencillo extraer `WSManager` y `QuestionService` en la siguiente fase porque la persistencia ya está encapsulada.
 
 Fase 3 — WSManager (encapsular websockets)
- Objetivo: mover todo `wss` y la lógica de mensajes a `server/services/WSManager.js`.
- Tareas:
-  - [x] Implementar `WSManager` con API pública (`attach`, subscription management, `publish`).
-  - [x] Mover manejo de `upgrade` y `ws.on('message')` desde `index.js` a `WSManager`.
-  - [x] Inyectar repos/servicios en `WSManager` (ParticipantsService, AnswerService, QuestionService, fetchActiveQuestion callback).
-  - [x] Tests: `test/wsmanager.test.js` añadido (mocks) incluyendo edge cases: mensajes malformados y reveal por usuario no-teacher.
-  - [~] Pendiente: añadir tests adicionales para casos de broadcast/errores por socket y permisos finos.
+Objetivo: mover todo `wss` y la lógica de mensajes a `server/services/WSManager.js`.
+Tareas:
 
+- [x] Implementar `WSManager` con API pública (`attach`, subscription management, `publish`).
+- [x] Mover manejo de `upgrade` y `ws.on('message')` desde `index.js` a `WSManager`.
+- [x] Inyectar repos/servicios en `WSManager` (ParticipantsService, AnswerService, QuestionService, fetchActiveQuestion callback).
+- [x] Tests: `test/wsmanager.test.js` añadido (mocks) incluyendo edge cases: mensajes malformados y reveal por usuario no-teacher.
+- [~] Pendiente: añadir tests adicionales para casos de broadcast/errores por socket y permisos finos.
 
 Checkpoint (tras Fases 0-3)
- Ejecutar:
-  - [x] `npm run lint` — resultado: [PASS]
-  - [~] `npm test` — resultado: [unit tests added; ejecutar la suite localmente y confirmar green]
-  - [~] `npm test` — resultado: algunos tests unitarios corren; fue necesario ajustar tests tras extraer `BroadcastService` y corregir `_onClose` en `WSManager`.
-  - [ ] Smoke: levantar servidor y probar endpoints básicos:
-    - GET `/api/debug/dbstats` => OK (manual check suggested)
-    - POST `/api/evaluate` => OK (puede devolver neutral si no hay keys)
-    - WS connect -> send `{type:'subscribe', classId:'X'}` => receive `{type:'subscribed'}` (pending WSManager extraction)
+Ejecutar:
+
+- [x] `npm run lint` — resultado: [PASS]
+- [~] `npm test` — resultado: [unit tests added; ejecutar la suite localmente y confirmar green]
+- [~] `npm test` — resultado: algunos tests unitarios corren; fue necesario ajustar tests tras extraer `BroadcastService` y corregir `_onClose` en `WSManager`.
+- [ ] Smoke: levantar servidor y probar endpoints básicos:
+  - GET `/api/debug/dbstats` => OK (manual check suggested)
+  - POST `/api/evaluate` => OK (puede devolver neutral si no hay keys)
+  - WS connect -> send `{type:'subscribe', classId:'X'}` => receive `{type:'subscribed'}` (pending WSManager extraction)
 
 Fase 4 — Controllers HTTP
+
 - Objetivo: mover lógica de rutas a `server/controllers/*` y montar routers en `server/app.js`.
 - Tareas:
- - Tareas:
-  - [x] Crear controllers para `participants` y `answers` (implementados: `server/controllers/participants.js`, `server/controllers/answers.js`).
-  - [x] Crear controllers adicionales y montarlos: `server/controllers/questions.js`, `server/controllers/classes.js`, `server/controllers/challenges.js`, `server/controllers/progress.js`, `server/controllers/settings.js`, `server/controllers/llm.js`, `server/controllers/diagnosis.js`.
-  - [x] Actualizar `server/app.js` / `server/index.js` para montar routers con `app.use` desde la composition root. Tests de controladores añadidos (`test/controllers/*`).
-  - [~] Tests de integración (`supertest`) para rutas críticas (`/api/answers`, `/api/questions/:id/reveal`, `/api/evaluate`) — en progreso / parciales.
+- Tareas:
+- [x] Crear controllers para `participants` y `answers` (implementados: `server/controllers/participants.js`, `server/controllers/answers.js`).
+- [x] Crear controllers adicionales y montarlos: `server/controllers/questions.js`, `server/controllers/classes.js`, `server/controllers/challenges.js`, `server/controllers/progress.js`, `server/controllers/settings.js`, `server/controllers/llm.js`, `server/controllers/diagnosis.js`.
+- [x] Actualizar `server/app.js` / `server/index.js` para montar routers con `app.use` desde la composition root. Tests de controladores añadidos (`test/controllers/*`).
+- [~] Tests de integración (`supertest`) para rutas críticas (`/api/answers`, `/api/questions/:id/reveal`, `/api/evaluate`) — en progreso / parciales.
 
- Fase 5 — QuestionService (lógica pura)
- - Objetivo: encapsular scoring y reveal.
- - Tareas:
-   - [x] Crear `server/services/QuestionService.js` con implementación de scoring y reveal (archivo añadido).
-  - [~] Migrar la lógica de `reveal` desde `server/index.js` a `QuestionService` (parcial: `QuestionService` implementada; WSManager ya delega a `QuestionService` para reveals, pero el endpoint HTTP `/api/questions/:id/reveal` debe delegar al servicio para eliminar duplicación). Prioridad alta.
-   - [x] Tests unitarios: `test/question.service.test.js` añadido (cubre MCQ y open/prompt paths).
+Fase 5 — QuestionService (lógica pura)
+
+- Objetivo: encapsular scoring y reveal.
+- Tareas:
+  - [x] Crear `server/services/QuestionService.js` con implementación de scoring y reveal (archivo añadido).
+- [~] Migrar la lógica de `reveal` desde `server/index.js` a `QuestionService` (parcial: `QuestionService` implementada; WSManager ya delega a `QuestionService` para reveals, pero el endpoint HTTP `/api/questions/:id/reveal` debe delegar al servicio para eliminar duplicación). Prioridad alta.
+- [x] Tests unitarios: `test/question.service.test.js` añadido (cubre MCQ y open/prompt paths).
 
 Fase 6 — Frontend: TeacherDashboard -> useTeacherController
+
 - Objetivo: separar UI y lógica en `src/modules/TeacherDashboard.jsx`.
 - Tareas:
   - [ ] Crear hook `src/controllers/useTeacherController.js` que expone el estado y handlers (launch, reveal, fetchParticipants, subscribe).
@@ -223,13 +236,14 @@ Fase 6 — Frontend: TeacherDashboard -> useTeacherController
   - [ ] Tests: Testing Library para UI y test del hook con mocks de `src/lib/storage`.
 
 Fase 7 — Cleanup, docs y cierre
+
 - Tareas:
   - [ ] Añadir `README-ARCHITECTURE.md` con resumen de servicios/repos y contratos.
   - [ ] Añadir PR template y CHANGELOG.md corto con versiones.
   - [ ] Revisar dependencias y actualizar `package.json` si es necesario.
 
-Pruebas sugeridas (ejemplos)
----------------------------
+## Pruebas sugeridas (ejemplos)
+
 - `test/llm.evaluator.test.js`:
   - Mock `global.fetch` para devolver payload de OpenAI con `choices[0].message.content = '{"score":80,"feedback":"bien"}'`.
   - assert evaluate(...) => {score:0.8, feedback:'bien'}.
@@ -237,38 +251,39 @@ Pruebas sugeridas (ejemplos)
 - `test/question.service.test.js`:
   - Crear array de answers con timestamps y comprobar `awardForMcq` aplica decay (puntos mayores para respuestas más rápidas).
 
-Quality Gates (por PR)
-----------------------
+## Quality Gates (por PR)
+
 - `npm run lint` → PASS
 - `npm test` → PASS
 - Smoke: endpoints básicos probados manualmente → PASS
 
-Edge cases y mitigaciones
-------------------------
+## Edge cases y mitigaciones
+
 - LLM devuelve texto no JSON: `_parseJsonFromText` intenta extraer substring JSON y fallbacks a neutral.
 - Mongo desconectado: `db.js` reintenta conexión o falla con error claro (no crash silencioso).
 - Race conditions en premios: usar `$inc` en repos para operaciones atómicas.
 - Malformed WS messages: WSManager valida y responde con error estructurado sin romper socket.
 
-PR / Commit guidance
---------------------
+## PR / Commit guidance
+
 - Crear rama `refactor/<feature>`.
 - Hacer commits pequeños, descriptivos y con tests.
 - PR description debe incluir: archivos modificados, tests añadidos, how to test locally, and potential breaking changes.
 
-Plantilla mínima de PR message
-----------------------------
+## Plantilla mínima de PR message
+
 Title: `refactor: <scope> - short description`
 
 Body:
+
 - What changed
 - Why
 - Files added/modified
 - How to test (commands)
 - Quality gates results
 
-Artifacts a crear (lista completa)
---------------------------------
+## Artifacts a crear (lista completa)
+
 - server/app.js
 - server/lib/db.js
 - server/repositories/ParticipantsRepo.js
@@ -284,69 +299,73 @@ Artifacts a crear (lista completa)
 - .env.example
 - README-ARCHITECTURE.md
 
-Notas para el siguiente desarrollador/IA
---------------------------------------
+## Notas para el siguiente desarrollador/IA
+
 1. Crea rama `refactor/llm-evaluator` e implementa Fase 1. No toques otras partes hasta PR aprobado.
 2. Para tests que involucran LLM, mockear `global.fetch` en Vitest.
 3. Para DB tests, usar `mongodb-memory-server` o mocks explícitos.
 4. Mantener compatibilidad con clientes existentes; si cambias la respuesta de un endpoint, documentar y versionar.
 
-Registro de progreso
---------------------
-- Última actualización: __[fecha]__
+## Registro de progreso
+
+- Última actualización: **[fecha]**
 - Comentarios:
-- Última actualización: __2025-08-28__
- - Comentarios:
-  - __2025-08-28__: Fase 0 completada; Fase 1 (LLMEvaluator) completada; Fase 2 started — added `server/lib/db.js` and `server/repositories/ParticipantsRepo.js`, and updated participants endpoints in `server/index.js` to use the repo (partial integration).
-  - Comentarios adicional:
-   - __2025-08-28__: `AnswersRepo` implementado y totalmente integrado en `server/index.js`; tests unitarios para `AnswersRepo` añadidos y pasados localmente.
-  - Test results (local):
-  - `test/participants.repo.test.js` — PASS (mock-based unit tests for ParticipantsRepo).
-  - `test/llm.evaluator.test.js` — PASS (LLMEvaluator unit tests ran earlier in session).
-  - `test/answers.repo.test.js` — PASS (added during this refactor).
-  - `test/classes.repo.test.js` — PASS (mock-based).
-  - `test/challenges.repo.test.js` — PASS (mock-based).
-  - `test/progress.repo.test.js` — PASS (mock-based).
+- Última actualización: **2025-08-28**
+- Comentarios:
+- **2025-08-28**: Fase 0 completada; Fase 1 (LLMEvaluator) completada; Fase 2 started — added `server/lib/db.js` and `server/repositories/ParticipantsRepo.js`, and updated participants endpoints in `server/index.js` to use the repo (partial integration).
+- Comentarios adicional:
+- **2025-08-28**: `AnswersRepo` implementado y totalmente integrado en `server/index.js`; tests unitarios para `AnswersRepo` añadidos y pasados localmente.
+- Test results (local):
+- `test/participants.repo.test.js` — PASS (mock-based unit tests for ParticipantsRepo).
+- `test/llm.evaluator.test.js` — PASS (LLMEvaluator unit tests ran earlier in session).
+- `test/answers.repo.test.js` — PASS (added during this refactor).
+- `test/classes.repo.test.js` — PASS (mock-based).
+- `test/challenges.repo.test.js` — PASS (mock-based).
+- `test/progress.repo.test.js` — PASS (mock-based).
 
-  - Vitest run (2025-08-28 13:52 local): 21 tests passed, 0 failed. Full run output available in developer environment.
+- Vitest run (2025-08-28 13:52 local): 21 tests passed, 0 failed. Full run output available in developer environment.
 
-  - __2025-08-28__: Broadcast and controller refactor progress:
-   - `server/services/BroadcastService.js` añadido y usado por `WSManager`.
-   - Tests añadidos/ajustados: `test/services/BroadcastService.test.js`, `test/wsmanager.test.js` (actualizado), y múltiples `test/controllers/*` para los routers extraídos.
-   - Se corrigió `WSManager._onClose` para invocar `participantsService.handleDisconnect` por cada clase antes de limpiar suscripciones.
+- **2025-08-28**: Broadcast and controller refactor progress:
+- `server/services/BroadcastService.js` añadido y usado por `WSManager`.
+- Tests añadidos/ajustados: `test/services/BroadcastService.test.js`, `test/wsmanager.test.js` (actualizado), y múltiples `test/controllers/*` para los routers extraídos.
+- Se corrigió `WSManager._onClose` para invocar `participantsService.handleDisconnect` por cada clase antes de limpiar suscripciones.
 
-  - Vitest run (2025-08-28): suite parcial ejecutada; se ajustaron tests y código en ciclos cortos hasta estabilizar los casos unitarios relacionados con WS y broadcasting. Recomendado: ejecutar `npm test` completo localmente y abordar los últimos fallos menores (tests de integración pendientes y cobertura de edge-cases).
+- Vitest run (2025-08-28): suite parcial ejecutada; se ajustaron tests y código en ciclos cortos hasta estabilizar los casos unitarios relacionados con WS y broadcasting. Recomendado: ejecutar `npm test` completo localmente y abordar los últimos fallos menores (tests de integración pendientes y cobertura de edge-cases).
 
-Firma
------
-Plan actualizado — entrada propia generada el __2025-08-28__ con el estado actual del refactor y recomendaciones para el siguiente paso.
+## Firma
+
+Plan actualizado — entrada propia generada el **2025-08-28** con el estado actual del refactor y recomendaciones para el siguiente paso.
 
 ---
 
-Siguiente paso recomendado (con prioridad y pasos concretos)
------------------------------------------------------------
-1) Meta inmediata (duración estimada: 1-2 horas): dejar la suite unitaria verde en la rama `refactor_oop`.
-  - Ejecutar localmente: `npm run lint` (debe pasar) y `npm test`.
-  - Corregir cualquier test unitario restante (especialmente controllers y casos de WS que dependan de `BroadcastService`).
-  - Resultado esperado: todos los tests unitarios pasan.
+## Siguiente paso recomendado (con prioridad y pasos concretos)
 
-2) Integración HTTP/WS (duración estimada: 1-3 horas): añadir tests de integración esenciales.
-  - Crear 2-3 tests `supertest` que arranquen `createApp()` + mocks/inyecten repos y verifiquen endpoints críticos:
-    - `PUT /api/settings/:id` upsert behavior
-    - `POST /api/answers` flow
-    - `POST /api/questions/:id/reveal` delegación a `QuestionService` (mock)
-  - Añadir integración WS mínima: test que monta `WSManager` con `broadcastService` mock y valida el flujo subscribe -> publish -> receive.
+1. Meta inmediata (duración estimada: 1-2 horas): dejar la suite unitaria verde en la rama `refactor_oop`.
 
-3) Finalizar Fase 5 (duración estimada: 1-2 horas): delegar el handler HTTP de reveal al `QuestionService`.
-  - Mover la lógica remanente del endpoint HTTP `/api/questions/:id/reveal` para usar `QuestionService.revealQuestion`.
-  - Añadir tests unitarios para el endpoint que verifiquen la delegación y el comportamiento esperado.
+- Ejecutar localmente: `npm run lint` (debe pasar) y `npm test`.
+- Corregir cualquier test unitario restante (especialmente controllers y casos de WS que dependan de `BroadcastService`).
+- Resultado esperado: todos los tests unitarios pasan.
 
-4) Harden & docs (duración estimada: 2-4 horas): pruebas de integración a BD y documentación.
-  - Añadir tests con `mongodb-memory-server` para validar queries reales del repos.
-  - Escribir `README-ARCHITECTURE.md` y actualizar `PLAN_REFACTOR.md` con contratos finales.
+2. Integración HTTP/WS (duración estimada: 1-3 horas): añadir tests de integración esenciales.
 
-Si quieres que implemente el siguiente paso ahora, dime cuál escoges (1: tests unitarios verdes localmente; 2: tests de integración supertest; 3: delegar reveal al `QuestionService`) y lo hago aquí mismo: crearé los tests/patches y ejecutaré los que sean rápidos. 
+- Crear 2-3 tests `supertest` que arranquen `createApp()` + mocks/inyecten repos y verifiquen endpoints críticos:
+  - `PUT /api/settings/:id` upsert behavior
+  - `POST /api/answers` flow
+  - `POST /api/questions/:id/reveal` delegación a `QuestionService` (mock)
+- Añadir integración WS mínima: test que monta `WSManager` con `broadcastService` mock y valida el flujo subscribe -> publish -> receive.
 
-Firma
------
+3. Finalizar Fase 5 (duración estimada: 1-2 horas): delegar el handler HTTP de reveal al `QuestionService`.
+
+- Mover la lógica remanente del endpoint HTTP `/api/questions/:id/reveal` para usar `QuestionService.revealQuestion`.
+- Añadir tests unitarios para el endpoint que verifiquen la delegación y el comportamiento esperado.
+
+4. Harden & docs (duración estimada: 2-4 horas): pruebas de integración a BD y documentación.
+
+- Añadir tests con `mongodb-memory-server` para validar queries reales del repos.
+- Escribir `README-ARCHITECTURE.md` y actualizar `PLAN_REFACTOR.md` con contratos finales.
+
+Si quieres que implemente el siguiente paso ahora, dime cuál escoges (1: tests unitarios verdes localmente; 2: tests de integración supertest; 3: delegar reveal al `QuestionService`) y lo hago aquí mismo: crearé los tests/patches y ejecutaré los que sean rápidos.
+
+## Firma
+
 Plan generado para el proyecto `aula_chatgpt` — dejar notas en los commits para continuar.

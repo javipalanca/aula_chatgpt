@@ -6,7 +6,7 @@ export function getDefaultMeta() {
     startedAt: null,
     askedQuestions: {},
     revealedQuestions: {},
-    mode: 'lobby',
-    timer: null
-  }
+    mode: "lobby",
+    timer: null,
+  };
 }

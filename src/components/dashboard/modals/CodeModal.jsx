@@ -1,6 +1,5 @@
-
-import React from 'react';
-import { Button } from '../../ui';
+import React from "react";
+import { Button } from "../../ui";
 
 export function CodeModal({ show, onClose, code }) {
   if (!show) return null;
@@ -12,7 +11,9 @@ export function CodeModal({ show, onClose, code }) {
         <h3 className="text-2xl font-bold mb-4">Código de clase</h3>
         <div className="text-6xl font-mono font-bold mb-6">{code}</div>
         <div className="flex justify-center">
-          <Button onClick={onClose} variant="ghost">Cerrar</Button>
+          <Button onClick={onClose} variant="ghost">
+            Cerrar
+          </Button>
         </div>
       </div>
     </div>

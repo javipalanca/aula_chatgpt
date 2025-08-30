@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect } from "react";
 
 /**
  * useRealtime (legacy-style callback variant)
@@ -19,44 +19,61 @@ import { useEffect } from 'react'
 export default function useRealtime(activeClass, callbacks = {}) {
   useEffect(() => {
     function onRealtime(e) {
-      const d = e.detail || {}
-      if (!d) return
+      const d = e.detail || {};
+      if (!d) return;
       try {
-  if (d.classId && activeClass && d.classId !== activeClass) return
-        if (d.type === 'participants-updated') {
-          callbacks.onParticipantsUpdated && callbacks.onParticipantsUpdated(d.participants || [])
-          return
+        if (d.classId && activeClass && d.classId !== activeClass) return;
+        if (d.type === "participants-updated") {
+          callbacks.onParticipantsUpdated &&
+            callbacks.onParticipantsUpdated(d.participants || []);
+          return;
         }
-        if (d.type === 'question-launched') {
-          callbacks.onQuestionLaunched && callbacks.onQuestionLaunched(d.question)
-          return
+        if (d.type === "question-launched") {
+          callbacks.onQuestionLaunched &&
+            callbacks.onQuestionLaunched(d.question);
+          return;
         }
-        if (d.type === 'answers-count') {
-          callbacks.onAnswersCount && callbacks.onAnswersCount(d)
-          return
+        if (d.type === "answers-count") {
+          callbacks.onAnswersCount && callbacks.onAnswersCount(d);
+          return;
         }
-        if (d.type === 'question-results') {
-          callbacks.onQuestionResults && callbacks.onQuestionResults(d)
-          return
+        if (d.type === "question-results") {
+          callbacks.onQuestionResults && callbacks.onQuestionResults(d);
+          return;
         }
-        if (d.type === 'participant-heartbeat' || d.type === 'participant-disconnected') {
-          callbacks.onParticipantHeartbeat && callbacks.onParticipantHeartbeat(d)
-          return
+        if (
+          d.type === "participant-heartbeat" ||
+          d.type === "participant-disconnected"
+        ) {
+          callbacks.onParticipantHeartbeat &&
+            callbacks.onParticipantHeartbeat(d);
+          return;
         }
       } catch (err) {
         // swallow errors to avoid breaking the global listener
-        console.debug('useRealtime handler error', err)
+        console.debug("useRealtime handler error", err);
       }
     }
 
     try {
-      window.addEventListener('aula-realtime', onRealtime)
+      window.addEventListener("aula-realtime", onRealtime);
     } catch (e) {
-      console.warn('useRealtime: could not add event listener', e)
+      console.warn("useRealtime: could not add event listener", e);
     }
 
     return () => {
-      try { window.removeEventListener('aula-realtime', onRealtime) } catch (e) { /* ignore */ }
-    }
-  }, [activeClass, callbacks.onParticipantsUpdated, callbacks.onQuestionLaunched, callbacks.onAnswersCount, callbacks.onQuestionResults, callbacks.onParticipantHeartbeat])
+      try {
+        window.removeEventListener("aula-realtime", onRealtime);
+      } catch (e) {
+        /* ignore */
+      }
+    };
+  }, [
+    activeClass,
+    callbacks.onParticipantsUpdated,
+    callbacks.onQuestionLaunched,
+    callbacks.onAnswersCount,
+    callbacks.onQuestionResults,
+    callbacks.onParticipantHeartbeat,
+  ]);
 }

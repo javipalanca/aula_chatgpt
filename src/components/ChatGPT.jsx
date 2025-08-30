@@ -1,36 +1,45 @@
-
-import React, { useState, useEffect } from 'react';
-import { getSessionId } from '../lib/storage';
-import useSubmitAnswer from '../hooks/useSubmitAnswer'
+import React, { useState, useEffect } from "react";
+import { getSessionId } from "../lib/storage";
+import useSubmitAnswer from "../hooks/useSubmitAnswer";
 
 export default function ChatGPT({ question, answer, onEvaluated }) {
   const [evaluation, setEvaluation] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
-  const { submitEvaluatedAnswer } = useSubmitAnswer()
+  const { submitEvaluatedAnswer } = useSubmitAnswer();
 
   useEffect(() => {
-    console.log('ChatGPT component mounted or updated');
+    console.log("ChatGPT component mounted or updated");
     const evaluate = async () => {
       try {
-        const response = await fetch('/api/evaluate', {
-          method: 'POST',
+        const response = await fetch("/api/evaluate", {
+          method: "POST",
           headers: {
-            'Content-Type': 'application/json',
+            "Content-Type": "application/json",
           },
           body: JSON.stringify({ question, answer }),
         });
         if (!response.ok) {
-          throw new Error('La evaluación ha fallado');
+          throw new Error("La evaluación ha fallado");
         }
         const data = await response.json();
-        console.log('Evaluation data:', data);
-  setEvaluation(data);
-  if (onEvaluated) onEvaluated(data);
+        console.log("Evaluation data:", data);
+        setEvaluation(data);
+        if (onEvaluated) onEvaluated(data);
         // also send evaluated answer to server so teacher UIs receive it as answer-evaluated
         try {
-          await submitEvaluatedAnswer(question.payload && question.payload.classId ? question.payload.classId : (question.classId || ''), getSessionId(), question.id, answer, data)
-        } catch (e) { console.warn('submitEvaluatedAnswer failed', e); }
+          await submitEvaluatedAnswer(
+            question.payload && question.payload.classId
+              ? question.payload.classId
+              : question.classId || "",
+            getSessionId(),
+            question.id,
+            answer,
+            data,
+          );
+        } catch (e) {
+          console.warn("submitEvaluatedAnswer failed", e);
+        }
       } catch (err) {
         setError(err.message);
       } finally {
@@ -45,7 +54,10 @@ export default function ChatGPT({ question, answer, onEvaluated }) {
     return (
       <div className="mt-3 p-3 rounded bg-yellow-500/20 text-left flex items-center justify-center gap-3">
         <div className="font-semibold">Evaluando...</div>
-        <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" aria-hidden="true" />
+        <div
+          className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"
+          aria-hidden="true"
+        />
       </div>
     );
   }
@@ -60,6 +72,4 @@ export default function ChatGPT({ question, answer, onEvaluated }) {
   }
 
   return null;
-
 }
-

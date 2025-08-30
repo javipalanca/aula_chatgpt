@@ -1,5 +1,8 @@
-import { useRef } from 'react'
-import { submitAnswer as submitAnswerHttp, submitEvaluatedAnswer as submitEvaluatedAnswerHttp } from '../lib/storage'
+import { useRef } from "react";
+import {
+  submitAnswer as submitAnswerHttp,
+  submitEvaluatedAnswer as submitEvaluatedAnswerHttp,
+} from "../lib/storage";
 
 /**
  * useSubmitAnswer
@@ -21,46 +24,65 @@ import { submitAnswer as submitAnswerHttp, submitEvaluatedAnswer as submitEvalua
  * - output: the HTTP response body from the storage helper
  */
 // Shared in-flight map to dedupe identical submissions across hook instances
-const IN_FLIGHT = {}
+const IN_FLIGHT = {};
 
 export default function useSubmitAnswer() {
-  const inflight = useRef(IN_FLIGHT)
+  const inflight = useRef(IN_FLIGHT);
 
   // Submit a plain answer. Key composed from class/session/question ensures
   // concurrent calls for the same logical submission reuse the same promise.
   const submitAnswer = async (classId, sessionId, questionId, answer) => {
-    if (!classId || !sessionId || !questionId) throw new Error('classId, sessionId and questionId required')
-    const key = `${classId}:${sessionId}:${questionId}`
-    if (inflight.current[key]) return inflight.current[key]
+    if (!classId || !sessionId || !questionId)
+      throw new Error("classId, sessionId and questionId required");
+    const key = `${classId}:${sessionId}:${questionId}`;
+    if (inflight.current[key]) return inflight.current[key];
     const p = (async () => {
       try {
-        const res = await submitAnswerHttp(classId, sessionId, questionId, answer)
-        return res
+        const res = await submitAnswerHttp(
+          classId,
+          sessionId,
+          questionId,
+          answer,
+        );
+        return res;
       } finally {
-        delete inflight.current[key]
+        delete inflight.current[key];
       }
-    })()
-    inflight.current[key] = p
-    return p
-  }
+    })();
+    inflight.current[key] = p;
+    return p;
+  };
 
   // Submit an evaluated answer (LLM evaluation included). Uses a distinct key
   // suffix to allow evaluation submissions to be deduped independently.
-  const submitEvaluatedAnswer = async (classId, sessionId, questionId, answer, evaluation = {}) => {
-    if (!classId || !sessionId || !questionId) throw new Error('classId, sessionId and questionId required')
-    const key = `${classId}:${sessionId}:${questionId}:eval`
-    if (inflight.current[key]) return inflight.current[key]
+  const submitEvaluatedAnswer = async (
+    classId,
+    sessionId,
+    questionId,
+    answer,
+    evaluation = {},
+  ) => {
+    if (!classId || !sessionId || !questionId)
+      throw new Error("classId, sessionId and questionId required");
+    const key = `${classId}:${sessionId}:${questionId}:eval`;
+    if (inflight.current[key]) return inflight.current[key];
     const p = (async () => {
       try {
-        const res = await submitEvaluatedAnswerHttp(classId, sessionId, questionId, answer, evaluation)
-        return res
+        const res = await submitEvaluatedAnswerHttp(
+          classId,
+          sessionId,
+          questionId,
+          answer,
+          evaluation,
+        );
+        return res;
       } finally {
-        delete inflight.current[key]
+        delete inflight.current[key];
       }
-    })()
-    inflight.current[key] = p
-    return p
-  }
+    })();
+    inflight.current[key] = p;
+    return p;
+  };
 
-  return { submitAnswer, submitEvaluatedAnswer }
+  return { submitAnswer, submitEvaluatedAnswer };
 }

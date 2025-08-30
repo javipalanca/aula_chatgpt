@@ -13,6 +13,7 @@ VITE_STORAGE_API=http://localhost:4000
 ```
 
 El proxy puede gestionar colecciones/colecciones equivalentes a: `progress`, `settings`, `classes`, `participants`, `challenges`.
+
 - `participants`: documentos por participante con id `"<classCode>:<sessionId>"` y campos `{ classId, sessionId, displayName, score, progress, lastSeen }`.
 - `challenges`: documentos por reto con id `"<classCode>:<challengeId>"` y campos `{ classId, id, title, duration, payload, startedAt }`.
 
