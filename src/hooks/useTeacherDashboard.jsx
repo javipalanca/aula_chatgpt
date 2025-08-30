@@ -1,27 +1,23 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
-import { createClass, listClasses, listClassParticipants, createQuestion, syncClassesRemote, initRealtime, revealQuestion, subscribeToClass, persistClassMeta, deleteClass, setClassActive, getApiBase } from '../lib/storage'
+import { createClass, listClasses, listClassParticipants, createQuestion, syncClassesRemote, initRealtime, revealQuestion, subscribeToClass, persistClassMeta, deleteClass, setClassActive, getApiBase, listAnsweredQuestionIds } from '../lib/storage'
 import { VERIF_QUIZ, ETHICS_SCENARIOS, BAD_PROMPTS } from '../lib/data'
 import { toast } from '../components/Toaster'
 import useRealtime from './useRealtime'
 
 /**
- * useTeacherDashboard
- * -------------------
- * Centralized hook that powers the teacher UI. It manages classes, the
- * currently running question, timers, participants, live answers and
- * exposes action handlers used by the TeacherDashboard component.
+ * Hook para la interfaz del profesor que centraliza la lógica del tablero.
  *
- * Major blocks:
- * - state declarations: all UI state used by the teacher dashboard
- * - helper mappers: functions to convert static datasets into question objects
- * - effects: initialization (load classes, sync remote), polling and subscription
- * - realtime handlers: delegated to `useRealtime` to react to student events
- * - actions: functions that launch questions, reveal results, create classes, etc.
- * - return: public API consumed by the UI
+ * Gestiona:
+ * - lista de clases y selección
+ * - estado de la pregunta actual, temporizador y resultados
+ * - participantes y respuestas en vivo
+ * - acciones para lanzar preguntas, revelar resultados y administrar clases
+ *
+ * @returns {Object} API pública del hook con estado y acciones consumidas por el componente UI
  */
 export default function useTeacherDashboard() {
   const [classes, setClasses] = useState([])
-  const [selected, setSelected] = useState(null)
+  const [activeClass, setActiveClass] = useState(null)
   const [questionRunning, setQuestionRunning] = useState(null)
   const [lastQuestionResults, setLastQuestionResults] = useState(null)
   const [showScoresOverlay, setShowScoresOverlay] = useState(false)
@@ -43,7 +39,11 @@ export default function useTeacherDashboard() {
   const mountedRef = useRef(true)
 
   const API_BASE = getApiBase()
-
+  /**
+   * Valores por defecto para la metadata de una clase.
+   *
+   * @returns {{currentBlockIndex:number,currentQuestionIndex:number,finished:boolean,startedAt:null,askedQuestions:Object,revealedQuestions:Object,mode:string,timer:number}}
+   */
   function getDefaultMeta() {
     return {
       currentBlockIndex: 0,
@@ -58,7 +58,25 @@ export default function useTeacherDashboard() {
   }
 
   // --- small helpers extracted for readability ---
+  /**
+   * Construye un bloque de preguntas aplicando un mapper a los items.
+   *
+   * @param {string} id Identificador del bloque
+   * @param {string} name Nombre legible del bloque
+   * @param {Array} items Array de items fuente
+   * @param {Function} mapper Función que transforma un item en una pregunta
+   * @returns {{id:string,name:string,questions:Array}} Bloque con preguntas
+   */
   const buildBlock = (id, name, items, mapper) => ({ id, name, questions: items.map(mapper) })
+
+  /**
+   * Mapper para preguntas de verificación (VERIF_QUIZ).
+   * Convierte un objeto del dataset en la estructura de pregunta usada por el hook.
+   *
+   * @param {Object} v Item fuente
+   * @param {number} idx Índice dentro del dataset
+   * @returns {Object} Pregunta transformada
+   */
   const verifMapper = (v, idx) => ({
     id: `q-verif-${idx}-${Date.now()}`,
     title: v.q,
@@ -69,6 +87,12 @@ export default function useTeacherDashboard() {
     timeDecay: typeof v.timeDecay === 'boolean' ? v.timeDecay : true,
     payload: { source: 'VERIF_QUIZ', explain: v.explain, correctAnswer: (Array.isArray(v.options) && typeof v.a !== 'undefined') ? v.options[v.a] : null }
   })
+  /**
+   * Mapper para escenarios éticos (ETHICS_SCENARIOS).
+   * @param {Object} e Item fuente
+   * @param {number} idx Índice dentro del dataset
+   * @returns {Object} Pregunta transformada
+   */
   const ethicsMapper = (e, idx) => ({
     id: `q-eth-${idx}-${Date.now()}`,
     title: e.text,
@@ -79,6 +103,12 @@ export default function useTeacherDashboard() {
     timeDecay: typeof e.timeDecay === 'boolean' ? e.timeDecay : true,
     payload: { source: 'ETHICS_SCENARIOS', why: e.why, correctAnswer: e.good ? 'Es correcto' : 'No es correcto' }
   })
+  /**
+   * Mapper para prompts malos / mejora de prompts (BAD_PROMPTS).
+   * @param {Object} b Item fuente
+   * @param {number} idx Índice dentro del dataset
+   * @returns {Object} Pregunta transformada
+   */
   const badMapper = (b, idx) => ({
     id: `q-bad-${idx}-${Date.now()}`,
     title: b.bad,
@@ -92,7 +122,14 @@ export default function useTeacherDashboard() {
   })
   // (helpers for building default blocks are available as the individual mappers)
 
-  // return the index of the first question in block that has not been asked yet
+  /**
+   * Devuelve el índice de la primera pregunta del bloque que no ha sido
+   * preguntada (según meta.askedQuestions).
+   *
+   * @param {{questions:Array}} block Bloque con campo questions
+   * @param {Object} meta Metadata de la clase donde se registra askedQuestions
+   * @returns {number|null} Índice de la primera pregunta no preguntada o null si no hay
+   */
   function findFirstUnaskedIndex(block, meta) {
     try {
       if (!block || !Array.isArray(block.questions) || block.questions.length === 0) return null
@@ -106,6 +143,15 @@ export default function useTeacherDashboard() {
     } catch (e) { return null }
   }
 
+  /**
+   * Inicializa el listado de clases y mantiene la cache en sincronía con
+   * el backend. Al montar el hook:
+   * - carga las clases desde la cache local via `listClasses()`
+   * - lanza `syncClassesRemote()` en background para actualizar desde el servidor
+   * - se suscribe al evento `aula-classes-updated` para reflejar cambios remotos
+   * Al desmontar, limpia la suscripción y marca el hook como desmontado.
+   * Dependencias: ninguna (se ejecuta una sola vez al montar).
+   */
   useEffect(()=>{
     // Inicialización de clases
     setClasses(listClasses())
@@ -116,37 +162,56 @@ export default function useTeacherDashboard() {
   }, [])
 
   // fetch functions stable with useCallback
+  /**
+   * Obtiene la lista de participantes de la clase seleccionada y actualiza
+   * el estado local. Actualiza también `lastRefresh`.
+   *
+   * @returns {Promise<void>}
+   */
   const fetchParticipants = useCallback(async () => {
     try {
-      if (!selected) return setParticipants([])
-      const parts = await listClassParticipants(selected)
+      if (!activeClass) return setParticipants([])
+      const parts = await listClassParticipants(activeClass)
       setParticipants(parts || [])
       setLastRefresh(new Date())
     } catch (e) {
       console.warn('fetchParticipants failed', e)
     }
-  }, [selected])
+  }, [activeClass])
 
+  /**
+   * Recupera desde el servidor los IDs de preguntas contestadas para una clase
+   * y rellena `answeredQuestionIds`.
+   *
+   * @param {string} classId Identificador o código de clase
+   * @returns {Promise<void>}
+   */
   const fetchAnsweredQuestions = useCallback(async (classId) => {
     try {
-      const r = await fetch(`/api/answers?classId=${encodeURIComponent(classId)}`)
-      if (!r.ok) return
-      const docs = await r.json()
-      const answeredIds = new Set(docs.map(d => d.questionId))
-      setAnsweredQuestionIds(answeredIds)
+  if (!classId) return setAnsweredQuestionIds(new Set())
+  const answeredIds = await listAnsweredQuestionIds(classId)
+  setAnsweredQuestionIds(answeredIds)
     } catch (e) {
       console.warn('fetchAnsweredQuestions failed', e)
     }
   }, [])
 
+  /**
+  * Cuando cambia la clase seleccionada (`activeClass`):
+   * - inicializa la conexión realtime y se suscribe al classId como profesor
+   * - obtiene la lista de participantes y las preguntas ya respondidas
+   * - sincroniza el índice de bloque mostrado (`blockViewIndex`) con la meta de la clase
+  * Si `activeClass` queda vacío, limpia el estado relacionado (participants/answered ids).
+  * Dependencias: `activeClass`, `fetchParticipants`, `fetchAnsweredQuestions`, `classes`.
+   */
   useEffect(()=>{
-    if (selected) {
+    if (activeClass) {
       initRealtime()
-      try { subscribeToClass(selected, { role: 'teacher' }) } catch(e) { console.warn('subscribeToClass failed', e) }
+      try { subscribeToClass(activeClass, { role: 'teacher' }) } catch(e) { console.warn('subscribeToClass failed', e) }
       fetchParticipants()
-      fetchAnsweredQuestions(selected)
+      fetchAnsweredQuestions(activeClass)
       try {
-        const cls = classes.find(c => (c.code || c.id) === selected) || {}
+        const cls = classes.find(c => (c.code || c.id) === activeClass) || {}
         const meta = cls.meta || {}
         if (typeof meta.currentBlockIndex === 'number') setBlockViewIndex(meta.currentBlockIndex)
       } catch(e) { /* ignore */ }
@@ -155,10 +220,17 @@ export default function useTeacherDashboard() {
       setAnsweredQuestionIds(new Set())
     }
     return ()=> { /* cleanup handled globally by storage.js websocket */ }
-  }, [selected, fetchParticipants, fetchAnsweredQuestions, classes])
+  }, [activeClass, fetchParticipants, fetchAnsweredQuestions, classes])
 
+  /**
+   * Poll periódico de participantes mientras hay una clase seleccionada.
+   * - Ejecuta `fetchParticipants()` cada `POLL_MS` milisegundos para mantener
+   *   la lista de participantes fresca en UIs que no confían sólo en WS.
+  * - Cancela el intervalo al desmontar o al cambiar `activeClass`.
+  * Dependencias: `activeClass`, `fetchParticipants`.
+   */
   useEffect(() => {
-    if (!selected) return
+    if (!activeClass) return
     const POLL_MS = 5000
     let mounted = true
     const tick = async () => {
@@ -169,15 +241,23 @@ export default function useTeacherDashboard() {
     }
     const id = setInterval(tick, POLL_MS)
     return () => { mounted = false; clearInterval(id) }
-  }, [selected, fetchParticipants])
+  }, [activeClass, fetchParticipants])
 
+  /**
+   * Efecto observador de `lastQuestionResults`.
+   * Intencionalmente no abre el overlay de puntuaciones automáticamente cuando
+   * llegan los resultados; la decisión UX es dejar que el profesor pulse para
+   * mostrar las puntuaciones. El hook queda como punto de extensión si en el
+   * futuro se desea comportamientos reactivos adicionales.
+   * Dependencias: `lastQuestionResults`.
+   */
   useEffect(()=>{
   // Do not auto-open the scores overlay when results arrive; require teacher to press "Mostrar puntuación"
   // This prevents revealing scores immediately on reveal and gives teacher control.
   }, [lastQuestionResults])
 
   // delegate realtime handling to useRealtime hook
-  useRealtime(selected, {
+  useRealtime(activeClass, {
     onParticipantsUpdated: (parts) => {
       setParticipants(parts.map(p => ({ sessionId: p.sessionId, displayName: p.displayName, score: p.score, lastSeen: p.lastSeen })))
       setLastRefresh(new Date())
@@ -206,9 +286,9 @@ export default function useTeacherDashboard() {
       setParticipants(prev => {
         const copy = (prev || []).slice()
         const idx = copy.findIndex(p => p.sessionId === d.sessionId)
-  // Preserve existing displayName if heartbeat does not include one
-  const existingName = (copy[idx] && copy[idx].displayName) ? copy[idx].displayName : null
-  const entry = { sessionId: d.sessionId, displayName: d.displayName || existingName || (`Alumno-${String(d.sessionId).slice(0,5)}`), score: (copy[idx] && copy[idx].score) || 0, lastSeen: d.lastSeen || new Date(), connected: d.type === 'participant-heartbeat' }
+        // Preserve existing displayName if heartbeat does not include one
+        const existingName = (copy[idx] && copy[idx].displayName) ? copy[idx].displayName : null
+        const entry = { sessionId: d.sessionId, displayName: d.displayName || existingName || (`Alumno-${String(d.sessionId).slice(0,5)}`), score: (copy[idx] && copy[idx].score) || 0, lastSeen: d.lastSeen || new Date(), connected: d.type === 'participant-heartbeat' }
         if (idx === -1) copy.push(entry)
         else copy[idx] = { ...copy[idx], ...entry }
         return copy
@@ -232,6 +312,15 @@ export default function useTeacherDashboard() {
     }
   })
 
+  /**
+   * Temporizador para la pregunta en ejecución.
+   * - Cuando `timerRunning` es true y hay una `questionRunning`, decrementa
+   *   `secondsLeft` cada segundo.
+   * - Al alcanzar 0 intenta automáticamente revelar la respuesta (si existe
+   *   una `preferred` en el payload), cayendo en captura si falla.
+   * - Limpia el intervalo al desmontar o cuando cambian las dependencias.
+   * Dependencias: `timerRunning`, `questionRunning`, `secondsLeft`.
+   */
   useEffect(() => {
     if (!timerRunning || !questionRunning || secondsLeft <= 0) {
       setTimerRunning(false);
@@ -243,8 +332,8 @@ export default function useTeacherDashboard() {
         setTimerRunning(false)
         try {
           const preferred = questionRunning?.payload?.correctAnswer;
-          if (preferred) {
-            revealQuestion(selected, questionRunning.id, preferred)
+      if (preferred) {
+        revealQuestion(activeClass, questionRunning.id, preferred)
               .then(res => {
                 setLastQuestionResults(res)
                 setSelectedCorrect(preferred)
@@ -262,7 +351,14 @@ export default function useTeacherDashboard() {
   // fetchParticipants and fetchAnsweredQuestions are declared above with useCallback
 
   async function handleRevealAction(preferredAnswer = null) {
-    if (!questionRunning) return toast('No hay pregunta activa')
+  /**
+   * Revela la respuesta correcta para la pregunta en ejecución. Intenta
+   * primero vía WebSocket y cae a una petición HTTP si falla.
+   *
+   * @param {string|null} preferredAnswer Respuesta preferida (sobrescribe payload)
+   * @returns {Promise<void>}
+   */
+  if (!questionRunning) return toast('No hay pregunta activa')
     setTimerRunning(false)
     // If this reveal is for the special end-of-game marker, keep the displayed secondsLeft
     const isGameEnd = questionRunning && questionRunning.payload && questionRunning.payload.type === 'game-ended'
@@ -278,7 +374,7 @@ export default function useTeacherDashboard() {
     }
     try {
       try {
-        const res = await revealQuestion(selected, questionRunning.id, correct)
+  const res = await revealQuestion(activeClass, questionRunning.id, correct)
         setLastQuestionResults(res)
         setSelectedCorrect(correct)
         toast('Resultados mostrados')
@@ -294,7 +390,7 @@ export default function useTeacherDashboard() {
         const r = await fetch(`/api/questions/${encodeURIComponent(questionRunning.id)}/reveal`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ classId: selected, correctAnswer: correct, points: pointsToSend })
+          body: JSON.stringify({ classId: activeClass, correctAnswer: correct, points: pointsToSend })
         })
         if (!r.ok) throw new Error('HTTP reveal failed: ' + r.status)
         const json = await r.json()
@@ -310,10 +406,16 @@ export default function useTeacherDashboard() {
   }
 
   async function handleCreateClass({ name, teacherName }) {
-    try {
-      const cls = await createClass({ name, teacherName, meta: {}, password: '' });
-      setClasses(listClasses());
-      setSelected(cls.code || cls.id || cls);
+  /**
+   * Crea una nueva clase y selecciona su código/localmente.
+   *
+   * @param {{name:string,teacherName:string}} param0
+   * @returns {Promise<void>}
+   */
+  try {
+  const cls = await createClass({ name, teacherName, meta: {}, password: '' });
+  setClasses(listClasses());
+  setActiveClass(cls.code || cls.id || cls);
       toast('Clase creada: ' + (cls.code || cls.id || cls));
     } catch (err) {
       toast('No se pudo crear: ' + (err.message || err));
@@ -321,12 +423,19 @@ export default function useTeacherDashboard() {
   }
 
   async function handleDeleteClass(code) {
-    if (!code) return;
+  /**
+   * Borra una clase local/remote y actualiza la lista.
+   * Pide confirmación al usuario.
+   *
+   * @param {string} code Código o id de la clase a borrar
+   * @returns {Promise<void>}
+   */
+  if (!code) return;
     if (!confirm('¿Borrar esta clase? Esta acción es irreversible.')) return;
     try {
       await deleteClass(code);
       setClasses(listClasses());
-      if (selected === code) setSelected(null);
+  if (activeClass === code) setActiveClass(null);
       toast('Clase borrada');
     } catch (e) {
       toast('No se pudo borrar: ' + (e.message || e));
@@ -334,7 +443,13 @@ export default function useTeacherDashboard() {
   }
 
   async function handleToggleActiveClass(code) {
-    if (!code) return;
+  /**
+   * Alterna el estado activo/inactivo de una clase.
+   *
+   * @param {string} code Código o id de la clase
+   * @returns {Promise<void>}
+   */
+  if (!code) return;
     try {
       const cls = classes.find(c => (c.code || c.id) === code);
       const current = cls ? cls.active : true;
@@ -348,11 +463,17 @@ export default function useTeacherDashboard() {
   
 
 
-    async function handleRestartGame() {
-      if (!selected) return
+  /**
+   * Reinicia el juego para la clase seleccionada. Intenta un endpoint
+   * atómico en servidor y, si falla, realiza una secuencia de limpieza.
+   *
+   * @returns {Promise<void>}
+   */
+  async function handleRestartGame() {
+      if (!activeClass) return
       try {
         // Try atomic server-side reset endpoint first
-        const res = await fetch(API_BASE + `/api/classes/${selected}/reset`, { method: 'POST' })
+        const res = await fetch(API_BASE + `/api/classes/${activeClass}/reset`, { method: 'POST' })
         if (res.ok) {
           await res.json()
           // Update local UI state to match server reset
@@ -378,19 +499,19 @@ export default function useTeacherDashboard() {
         await fetch(API_BASE + '/api/participants/reset-scores', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ classId: selected })
+          body: JSON.stringify({ classId: activeClass })
         })
 
         // reset class meta locally and persist
-        const cls = classes.find(c => (c.code || c.id) === selected)
+        const cls = classes.find(c => (c.code || c.id) === activeClass)
         if (cls) {
           const meta = getDefaultMeta()
-          await persistClassMeta(selected, meta)
+          await persistClassMeta(activeClass, meta)
         }
 
         // best-effort delete answers remotely
         try {
-          await fetch(API_BASE + `/api/answers?classId=${selected}`, { method: 'DELETE' })
+          await fetch(API_BASE + `/api/answers?classId=${activeClass}`, { method: 'DELETE' })
         } catch (e) { console.warn('delete answers failed', e) }
 
   setClasses(listClasses())
@@ -408,13 +529,19 @@ export default function useTeacherDashboard() {
         }
       }
 
-      async function handleFinishGame() {
-        if (!selected) return;
-        const cls = classes.find(c => (c.code || c.id) === selected) || {};
-        const meta = cls.meta || {};
+  /**
+   * Marca el juego como finalizado, persiste metadata y muestra el modal
+   * con los ganadores.
+   *
+   * @returns {Promise<void>}
+   */
+  async function handleFinishGame() {
+  if (!activeClass) return;
+  const cls = classes.find(c => (c.code || c.id) === activeClass) || {};
+  const meta = cls.meta || {};
 
-        meta.finished = true;
-        await persistClassMeta(selected, meta);
+  meta.finished = true;
+  await persistClassMeta(activeClass, meta);
         setClasses(listClasses());
         setShowFinishGameButton(false);
 
@@ -425,7 +552,13 @@ export default function useTeacherDashboard() {
       }
 
   function handleShowCode(code) {
-    if (!code) return;
+  /**
+   * Muestra el modal con el código de la clase.
+   *
+   * @param {string} code Código de la clase
+   * @returns {void}
+   */
+  if (!code) return;
     setCodeToShow(code);
     setShowCodeModal(true);
   }
@@ -433,12 +566,18 @@ export default function useTeacherDashboard() {
   // stable wrapper for show code used by children (use handleShowCode directly)
 
   async function handleLaunch() {
-    console.log('handleLaunch invoked', { selected })
-    if (!selected) return toast('Selecciona una clase')
+  /**
+   * Lanza la pregunta actual según la metadata de la clase. Si no existe
+   * la estructura de bloques, la inicializa.
+   *
+   * @returns {Promise<void>}
+   */
+  console.log('handleLaunch invoked', { activeClass })
+  if (!activeClass) return toast('Selecciona una clase')
     try {
-      const cls = classes.find(c => (c.code || c.id) === selected) || {}
+      const cls = classes.find(c => (c.code || c.id) === activeClass) || {}
       const meta = cls.meta || {}
-      if (!meta.blocks) {
+  if (!meta.blocks) {
         meta.blocks = [
           buildBlock('ETHICS', 'Escenarios éticos', ETHICS_SCENARIOS, ethicsMapper),
           buildBlock('VERIF', 'Verificación', VERIF_QUIZ, verifMapper),
@@ -446,8 +585,8 @@ export default function useTeacherDashboard() {
         ]
         meta.currentBlockIndex = 0
         meta.currentQuestionIndex = 0
-        await persistClassMeta(selected, meta); 
-        console.log('persisted initial class meta', { classId: selected, meta }); 
+  await persistClassMeta(activeClass, meta); 
+  console.log('persisted initial class meta', { classId: activeClass, meta }); 
         setBlockViewIndex(meta.currentBlockIndex || 0); 
         setClasses(listClasses());
       }
@@ -495,23 +634,23 @@ export default function useTeacherDashboard() {
             }
 
       // Launch the current question
-      const q = await createQuestion(selected, qPayload)
+  const q = await createQuestion(activeClass, qPayload)
       setQuestionRunning(q)
       setSecondsLeft(q.duration || 30)
       setTimerRunning(true)
       setLastQuestionResults(null)
       setSelectedCorrect(null)
       setLiveAnswers(prev => ({ ...prev, [q.id]: { total: 0, counts: {} } }))
-      try { subscribeToClass(selected, { role: 'teacher' }) } catch(e) { console.warn('subscribeToClass on launch failed', e) }
+  try { subscribeToClass(activeClass, { role: 'teacher' }) } catch(e) { console.warn('subscribeToClass on launch failed', e) }
       toast('Pregunta lanzada: ' + q.title)
 
       // Mark this question as asked in class meta (so UI can show it as green)
-      try {
-        const cls2 = classes.find(c => (c.code || c.id) === selected) || {}
-        const meta2 = cls2.meta || {}
-        meta2.askedQuestions = meta2.askedQuestions || {}
-        meta2.askedQuestions[q.id] = true
-        await persistClassMeta(selected, meta2)
+    try {
+  const cls2 = classes.find(c => (c.code || c.id) === activeClass) || {}
+  const meta2 = cls2.meta || {}
+  meta2.askedQuestions = meta2.askedQuestions || {}
+  meta2.askedQuestions[q.id] = true
+  await persistClassMeta(activeClass, meta2)
       } catch (e) { console.warn('mark askedQuestions failed', e) }
 
       // Advance question index for the next launch
@@ -533,9 +672,9 @@ export default function useTeacherDashboard() {
       }
 
       // Persist meta without advancing block index here, as block advancement is now manual
-      await persistClassMeta(selected, meta);
+  await persistClassMeta(activeClass, meta);
       setClasses(listClasses()); // Refresh classes to reflect updated meta
-      setBlockViewIndex(currentBlockIndex); // Keep block view on current block
+  setBlockViewIndex(currentBlockIndex); // Keep block view on current block
 
     } catch (err) {
       console.error('handleLaunch failed', err)
@@ -544,10 +683,18 @@ export default function useTeacherDashboard() {
   }
 
   async function jumpToQuestion(blockIndex, questionIndex) {
-    console.log('jumpToQuestion invoked', { blockIndex, questionIndex });
+  /**
+   * Actualiza la metadata de la clase para seleccionar una pregunta
+   * concreta (para salto directo).
+   *
+   * @param {number} blockIndex Índice del bloque destino
+   * @param {number} questionIndex Índice de la pregunta dentro del bloque
+   * @returns {Promise<void>}
+   */
+  console.log('jumpToQuestion invoked', { blockIndex, questionIndex });
     try {
-      if (!selected) return
-      const cls = classes.find(c => (c.code || c.id) === selected) || {}
+  if (!activeClass) return
+  const cls = classes.find(c => (c.code || c.id) === activeClass) || {}
       const meta = cls.meta || {}
       if (!meta.blocks) {
         // Initialize blocks if they don't exist
@@ -558,7 +705,7 @@ export default function useTeacherDashboard() {
         ]
         meta.currentBlockIndex = 0
         meta.currentQuestionIndex = 0
-        await persistClassMeta(selected, meta);
+  await persistClassMeta(activeClass, meta);
         setClasses(listClasses());
       }
 
@@ -568,13 +715,13 @@ export default function useTeacherDashboard() {
       if (!block || !Array.isArray(block.questions) || block.questions.length === 0) return toast('Bloque vacío')
       const qIdx = Math.min(questionIndex, block.questions.length - 1)
 
-      // Update meta with the selected question's indices
+  // Update meta with the activeClass question's indices
       meta.currentBlockIndex = blockIndex
       meta.currentQuestionIndex = qIdx
       meta.finished = false; // Ensure game is not marked as finished if jumping to a question
-      await persistClassMeta(selected, meta);
+  await persistClassMeta(activeClass, meta);
       setClasses(listClasses()); // Refresh classes to reflect updated meta
-      setBlockViewIndex(blockIndex); // Update UI to show the selected block
+  setBlockViewIndex(blockIndex); // Update UI to show the block for the activeClass
       toast('Pregunta seleccionada: ' + (qIdx + 1) + ' del bloque ' + (blockIndex+1))
 
     } catch (e) { 
@@ -584,9 +731,15 @@ export default function useTeacherDashboard() {
   }
 
   async function handleNextBlock() {
-    if (!selected) return
+  /**
+   * Avanza la metadata de la clase al siguiente bloque y selecciona la
+   * primera pregunta no preguntada del bloque destino.
+   *
+   * @returns {Promise<void>}
+   */
+  if (!activeClass) return
     try {
-      const cls = classes.find(c => (c.code || c.id) === selected) || {}
+      const cls = classes.find(c => (c.code || c.id) === activeClass) || {}
       const meta = cls.meta || {}
       const blocks = meta.blocks || []
       const next = (typeof meta.currentBlockIndex === 'number' ? meta.currentBlockIndex : 0) + 1
@@ -596,7 +749,7 @@ export default function useTeacherDashboard() {
       const nextBlock = blocks[next]
       const firstUnasked = findFirstUnaskedIndex(nextBlock, meta)
       meta.currentQuestionIndex = (typeof firstUnasked === 'number' && firstUnasked >= 0) ? firstUnasked : 0
-      await persistClassMeta(selected, meta)
+  await persistClassMeta(activeClass, meta)
       setClasses(listClasses())
       setBlockViewIndex(next)
   // Clear the "next block" UI state so teacher can launch the first question of the new block
@@ -614,10 +767,19 @@ export default function useTeacherDashboard() {
   // When the teacher changes the block view (e.g. clicks a different block bubble),
   // ensure meta.currentBlockIndex/currentQuestionIndex are set so the "next question"
   // will be the first non-asked in that block; if all asked, enable the Next Block button.
+  /**
+   * Reacts when the teacher changes the `blockViewIndex` (the block shown in UI).
+   * - Busca la primera pregunta no preguntada en el bloque mostrado y, si
+   *   procede, actualiza la metadata de la clase (`currentBlockIndex`/`currentQuestionIndex`)
+   *   de forma optimista y la persiste.
+   * - Si todas las preguntas del bloque ya han sido preguntadas, muestra el
+   *   botón de "Siguiente bloque" o "Finalizar" dependiendo si es el último.
+   * Dependencias: `blockViewIndex`, `activeClass`, `classes`.
+   */
   useEffect(() => {
-    if (!selected) return
+    if (!activeClass) return
     try {
-      const cls = classes.find(c => (c.code || c.id) === selected) || {}
+      const cls = classes.find(c => (c.code || c.id) === activeClass) || {}
       const meta = cls.meta || {}
       const blocks = meta.blocks || []
       const idx = blockViewIndex
@@ -641,7 +803,7 @@ export default function useTeacherDashboard() {
             meta.currentQuestionIndex = firstUnasked
             meta.finished = false
             // persist but don't force a local classes refresh here (storage will emit update)
-            persistClassMeta(selected, meta).catch(()=>{})
+            persistClassMeta(activeClass, meta).catch(()=>{})
           }
         }
         setShowNextBlockButton(false)
@@ -654,16 +816,19 @@ export default function useTeacherDashboard() {
         setShowNextBlockButton(!isLastBlock)
       }
     } catch (e) { /* ignore */ }
-  }, [blockViewIndex, selected, classes])
+  }, [blockViewIndex, activeClass, classes])
 
-  const selectedClassData = selected ? classes.find(c => (c.code || c.id) === selected) : null;
-  const memoSelectedClassData = useMemo(() => selectedClassData, [selected, classes])
+  const activeClassData = activeClass ? classes.find(c => (c.code || c.id) === activeClass) : null;
+  const memoActiveClassData = useMemo(() => activeClassData, [activeClass, classes])
 
   return {
     // state
     classes,
-    selected,
-    setSelected,
+  activeClass,
+  setActiveClass,
+  // backward-compatible aliases
+  selected: activeClass,
+  setSelected: setActiveClass,
     questionRunning,
     lastQuestionResults,
     showScoresOverlay,
@@ -689,7 +854,9 @@ export default function useTeacherDashboard() {
     lastRefresh,
 
     // derived
-  selectedClassData: memoSelectedClassData,
+  activeClassData: memoActiveClassData,
+  // backward-compatible alias
+  selectedClassData: memoActiveClassData,
 
     // actions
     fetchParticipants,

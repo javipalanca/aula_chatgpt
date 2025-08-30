@@ -31,8 +31,8 @@ export default function TeacherDashboard() {
 
   const {
     classes,
-    selected,
-    setSelected,
+    activeClass,
+    setActiveClass,
     questionRunning,
     lastQuestionResults,
     showScoresOverlay,
@@ -51,7 +51,7 @@ export default function TeacherDashboard() {
     showNextBlockButton,
     showFinishGameButton,
     answeredQuestionIds,
-  selectedClassData,
+    activeClassData,
 
   // actions
     handleRevealAction,
@@ -64,15 +64,15 @@ export default function TeacherDashboard() {
     handleShowCode,
     handleLaunch,
     jumpToQuestion,
-  setShowFinalModal,
+    setShowFinalModal,
   } = state
   
 
-  if (!selected || !selectedClassData) {
+  if (!activeClass || !activeClassData) {
     return (
       <ClassSelector
         classes={classes}
-        onSelectClass={setSelected}
+        onSelectClass={setActiveClass}
         onCreateClass={handleCreateClass}
         onDeleteClass={handleDeleteClass}
         onToggleActiveClass={handleToggleActiveClass}
@@ -85,20 +85,20 @@ export default function TeacherDashboard() {
     <div className="p-4">
       
       <DashboardHeader 
-        classData={selectedClassData}
+        classData={activeClassData}
         questionRunning={questionRunning}
-        onToggleActive={() => handleToggleActiveClass(selected)}
-        onDelete={() => handleDeleteClass(selected)}
+        onToggleActive={() => handleToggleActiveClass(activeClass)}
+        onDelete={() => handleDeleteClass(activeClass)}
         onRestartGame={handleRestartGame}
-  onExit={() => setSelected(null)}
-  onShowCode={handleShowCode}
+        onExit={() => setActiveClass(null)}
+        onShowCode={handleShowCode}
       />
 
       <FancyCard className="p-6 mt-4">
         <div className="flex flex-col md:flex-row md:items-start md:gap-6">
           <div className="flex-1">
             <Timeline 
-                classData={selectedClassData}
+                classData={activeClassData}
                 blockViewIndex={blockViewIndex}
                 setBlockViewIndex={setBlockViewIndex}
                 questionRunning={questionRunning}

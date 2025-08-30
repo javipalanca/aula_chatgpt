@@ -8,7 +8,7 @@ import { useEffect } from 'react'
  *
  * Blocks:
  * - imports: useEffect
- * - onRealtime: map event types to callback functions and filter by `selected` class
+ * - onRealtime: map event types to callback functions and filter by `activeClass`
  * - effect: register/remove the `aula-realtime` listener and keep dependencies
  *
  * Note: This file offers an alternative signature used in some parts of the
@@ -16,13 +16,13 @@ import { useEffect } from 'react'
  * handler function. Prefer `useRealtime.js` (single handler + opts) for most
  * new code, but keep this one for compatibility.
  */
-export default function useRealtime(selected, callbacks = {}) {
+export default function useRealtime(activeClass, callbacks = {}) {
   useEffect(() => {
     function onRealtime(e) {
       const d = e.detail || {}
       if (!d) return
       try {
-        if (d.classId && selected && d.classId !== selected) return
+  if (d.classId && activeClass && d.classId !== activeClass) return
         if (d.type === 'participants-updated') {
           callbacks.onParticipantsUpdated && callbacks.onParticipantsUpdated(d.participants || [])
           return
@@ -58,5 +58,5 @@ export default function useRealtime(selected, callbacks = {}) {
     return () => {
       try { window.removeEventListener('aula-realtime', onRealtime) } catch (e) { /* ignore */ }
     }
-  }, [selected, callbacks.onParticipantsUpdated, callbacks.onQuestionLaunched, callbacks.onAnswersCount, callbacks.onQuestionResults, callbacks.onParticipantHeartbeat])
+  }, [activeClass, callbacks.onParticipantsUpdated, callbacks.onQuestionLaunched, callbacks.onAnswersCount, callbacks.onQuestionResults, callbacks.onParticipantHeartbeat])
 }
